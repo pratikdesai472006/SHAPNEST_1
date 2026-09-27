@@ -6,6 +6,14 @@ SHAPNEST PHASE 1 — END-TO-END SIMULATION & INTEGRATION TEST SUITE
 Tests all protocol structures, signal filtering mathematics, log-distance calculations,
 boundary clamping, binary serialization/deserialization, Central Hub NDJSON generation,
 and Web Application presentation conversions.
+Includes comprehensive tests for:
+- Fresh scan-window sampling and stale sample isolation
+- RSSI sanity bounds (-95 dBm to -20 dBm)
+- In-window impulse outlier rejection
+- Adaptive EMA filter (fast alpha=0.60 vs slow alpha=0.25)
+- EMA clean initialization
+- Stale and Offline state machine progression
+- Per-node independent calibration constants (A and n)
 ===============================================================================
 """
 
@@ -59,7 +67,7 @@ def clamp_distance_cm(dist_m: float) -> int:
     return int(cm)
 
 class SignalFilterPipeline:
-    """Simulates the wristband's 5-sample median filter + EMA smoothing."""
+    """Simulates the legacy wristband's 5-sample median filter + EMA smoothing."""
     def __init__(self, alpha: float = 0.25):
         self.alpha = alpha
         self.buffer = []
@@ -85,23 +93,87 @@ class SignalFilterPipeline:
         return self.ema_rssi
 
 
+class AdvancedSignalFilterPipeline:
+    """Accurately simulates the updated wristband firmware signal conditioning pipeline."""
+    def __init__(self, alpha_fast=0.60, alpha_slow=0.25, step_thresh=4.0,
+                 sanity_min=-95, sanity_max=-20, impulse_thresh=15,
+                 refA=-59, expN=2.2):
+        self.alpha_fast = alpha_fast
+        self.alpha_slow = alpha_slow
+        self.step_thresh = step_thresh
+        self.sanity_min = sanity_min
+        self.sanity_max = sanity_max
+        self.impulse_thresh = impulse_thresh
+        self.refA = float(refA)
+        self.expN = float(expN)
+        
+        self.window_samples = []
+        self.ema_rssi = None
+        self.last_seen_ms = 0
+        self.state = STATE_OFFLINE
+        self.distance_cm = SHAPNEST_DISTANCE_OFFLINE_CM
+        self.filtered_rssi = SHAPNEST_RSSI_OFFLINE
+
+    def start_window(self):
+        """Called at the beginning of each 900ms scan window to isolate fresh samples."""
+        self.window_samples = []
+
+    def add_raw_sample(self, rssi: int, now_ms: int) -> bool:
+        """Applies physical sanity gate before recording into window buffer."""
+        if rssi < self.sanity_min or rssi > self.sanity_max:
+            return False
+        self.window_samples.append(rssi)
+        self.last_seen_ms = now_ms
+        return True
+
+    def process_cycle(self, now_ms: int):
+        """Processes signal conditioning and distance estimation at the end of the scan."""
+        age_ms = (now_ms - self.last_seen_ms) if self.last_seen_ms > 0 else 999999
+        
+        # Staleness State Machine
+        if self.last_seen_ms == 0 or age_ms > 3500:
+            self.state = STATE_OFFLINE
+            self.distance_cm = SHAPNEST_DISTANCE_OFFLINE_CM
+            self.filtered_rssi = SHAPNEST_RSSI_OFFLINE
+            self.ema_rssi = None
+            return
+        elif age_ms >= 1200:
+            self.state = STATE_STALE
+            # Retain last valid distance; do NOT recalculate from old data
+            return
+        else:
+            self.state = STATE_ACTIVE
+
+        # Only process if fresh samples arrived in this scan window
+        if len(self.window_samples) > 0:
+            sorted_s = sorted(self.window_samples)
+            med = sorted_s[len(sorted_s) // 2]
+
+            # In-window impulse rejection (>= 3 samples)
+            if len(sorted_s) >= 3:
+                inliers = [s for s in sorted_s if abs(s - med) <= self.impulse_thresh]
+                if inliers:
+                    med = inliers[len(inliers) // 2]
+
+            # Adaptive EMA Filter
+            if self.ema_rssi is None:
+                self.ema_rssi = float(med)
+            else:
+                delta = abs(float(med) - self.ema_rssi)
+                alpha = self.alpha_fast if delta > self.step_thresh else self.alpha_slow
+                self.ema_rssi = (alpha * float(med)) + ((1.0 - alpha) * self.ema_rssi)
+
+            self.filtered_rssi = round(self.ema_rssi)
+            exponent = (self.refA - self.ema_rssi) / (10.0 * self.expN)
+            dist_m = math.pow(10.0, exponent)
+            self.distance_cm = clamp_distance_cm(dist_m)
+
+
 class TestProtocolSerialization(unittest.TestCase):
     """Verifies strict byte packing and lengths of all binary frames."""
 
     def test_node_beacon_packet_layout(self):
         """Node packet must be exactly 12 bytes."""
-        # Struct format: < (Little-Endian)
-        # B: flags_len (0x02)
-        # B: flags_type (0x01)
-        # B: flags_data (0x06)
-        # B: mfr_len (0x08)
-        # B: mfr_type (0xFF)
-        # H: company_id (0x534E)
-        # B: frame_type (0x01)
-        # B: node_id (1)
-        # b: cal_rssi (-59)
-        # B: exp_x10 (22)
-        # B: seq (10)
         fmt = "<BBB BB H B B b B B"
         pkt = struct.pack(fmt,
                           0x02, 0x01, 0x06,
@@ -121,10 +193,6 @@ class TestProtocolSerialization(unittest.TestCase):
 
     def test_wristband_telemetry_packet_layout(self):
         """Wristband telemetry packet must be exactly 31 bytes (Legacy BLE PDU limit)."""
-        # Header: Flags (3B), MFR AD (2B: len 0x1B, type 0xFF), Company ID (2B: 0x534E),
-        #         Frame Type (1B: 0x02), Wristband ID (1B: 1), Seq (1B), Count (1B: 5)
-        # Nodes: 5 x (id_state: 1B, dist_cm: 2B, rssi: 1B) = 20B
-        # Total: 3 + 2 + 2 + 1 + 1 + 1 + 1 + 20 = 31 Bytes
         header_fmt = "<BBB BB H B B B B"
         node_block_fmt = "<B H b"  # 4 bytes
         
@@ -139,7 +207,6 @@ class TestProtocolSerialization(unittest.TestCase):
                              )
         self.assertEqual(len(header), 11)
         
-        # Pack 5 node blocks
         blocks = b""
         test_nodes = [
             (1, STATE_ACTIVE, 82, -57),
@@ -172,66 +239,192 @@ class TestFilteringAndMath(unittest.TestCase):
     def test_median_filter_impulse_rejection(self):
         """Rolling median must completely discard isolated multipath spikes."""
         filt = SignalFilterPipeline(alpha=0.25)
-        # Normal sequence with an extreme -95 dBm multipath dropout
         measurements = [-60, -61, -95, -60, -59]
         for m in measurements:
             filt.add_sample(m)
         
-        # Sorted: [-95, -61, -60, -60, -59] -> Median is -60
         sorted_m = sorted(measurements)
         self.assertEqual(sorted_m[2], -60)
-        
-        # Output should be close to -60, not pulled down by -95
         output = filt.compute()
         self.assertAlmostEqual(output, -60.0, places=1)
 
     def test_ema_smoothing_convergence(self):
         """EMA should smoothly track a step change with alpha=0.25."""
         filt = SignalFilterPipeline(alpha=0.25)
-        # Start at -60 dBm
         for _ in range(5):
             filt.add_sample(-60)
         filt.compute()
         self.assertAlmostEqual(filt.ema_rssi, -60.0)
         
-        # Step to -70 dBm
         filt.buffer = []
         for _ in range(5):
             filt.add_sample(-70)
         
         step1 = filt.compute()
-        # 0.25 * (-70) + 0.75 * (-60) = -17.5 - 45 = -62.5
         self.assertAlmostEqual(step1, -62.5, places=2)
 
     def test_log_distance_calculation(self):
         """Verifies distance formula at reference, closer, and farther points."""
         a = -59.0
         n = 2.2
-        # At reference RSSI (-59 dBm) distance must be exactly 1.00 m
         d1 = calculate_log_distance(-59.0, a, n)
         self.assertAlmostEqual(d1, 1.00, places=2)
         
-        # At -68 dBm: d = 10^(( -59 - (-68) ) / 22) = 10^(9/22) = 10^0.4091 = 2.565 m
         d2 = calculate_log_distance(-68.0, a, n)
         self.assertAlmostEqual(d2, 2.565, places=2)
 
     def test_operational_bounds_clamping(self):
         """Verifies clamping to 0.15 m floor, 8.00 m ceiling, and sentinels."""
-        # Near-field saturation: RSSI = -35 dBm -> calculated d ~ 0.08 m -> clamped to 15 cm
         d_close = calculate_log_distance(-35.0)
         self.assertLess(d_close, 0.15)
         self.assertEqual(clamp_distance_cm(d_close), SHAPNEST_DISTANCE_MIN_CM)
         
-        # Far-field noise: RSSI = -85 dBm -> calculated d ~ 15.1 m -> clamped to 800 cm
         d_far = calculate_log_distance(-85.0)
         self.assertGreater(d_far, 8.00)
         self.assertEqual(clamp_distance_cm(d_far), SHAPNEST_DISTANCE_MAX_CM)
         
-        # Normal distance: 1.45 m -> 145 cm
         self.assertEqual(clamp_distance_cm(1.45), 145)
-        
-        # Offline sentinel
         self.assertEqual(clamp_distance_cm(-1.0), SHAPNEST_DISTANCE_OFFLINE_CM)
+
+
+class TestAdvancedSignalConditioningPipeline(unittest.TestCase):
+    """Directly verifies the new distance-accuracy enhancements."""
+
+    def test_sanity_bounds_rejection(self):
+        """Raw RSSI outside [-95, -20] dBm must be rejected by the physical sanity gate."""
+        pipe = AdvancedSignalFilterPipeline()
+        pipe.start_window()
+        self.assertFalse(pipe.add_raw_sample(-96, 1000), "Should reject < -95 dBm")
+        self.assertFalse(pipe.add_raw_sample(-100, 1000), "Should reject extreme noise")
+        self.assertFalse(pipe.add_raw_sample(-15, 1000), "Should reject RF saturation > -20 dBm")
+        self.assertFalse(pipe.add_raw_sample(0, 1000), "Should reject non-negative RSSI")
+        self.assertTrue(pipe.add_raw_sample(-59, 1000), "Should accept valid -59 dBm")
+        self.assertTrue(pipe.add_raw_sample(-25, 1000), "Should accept valid -25 dBm")
+        self.assertTrue(pipe.add_raw_sample(-90, 1000), "Should accept valid -90 dBm")
+
+    def test_fresh_scan_window_isolation(self):
+        """Previous cycle samples must not leak into new scan windows."""
+        pipe = AdvancedSignalFilterPipeline()
+        # Window 1: Node at 1.0 m (approx -59 dBm)
+        pipe.start_window()
+        pipe.add_raw_sample(-59, 1000)
+        pipe.add_raw_sample(-60, 1050)
+        pipe.add_raw_sample(-58, 1100)
+        pipe.process_cycle(1200)
+        self.assertEqual(len(pipe.window_samples), 3)
+        self.assertEqual(pipe.distance_cm, 100)
+
+        # Window 2: Window starts, buffer must be isolated
+        pipe.start_window()
+        self.assertEqual(len(pipe.window_samples), 0, "Window buffer must be reset at window start")
+        
+        # Add 3 samples for 3.0 m (approx -70 dBm)
+        pipe.add_raw_sample(-70, 2000)
+        pipe.add_raw_sample(-71, 2050)
+        pipe.add_raw_sample(-70, 2100)
+        pipe.process_cycle(2200)
+        self.assertEqual(len(pipe.window_samples), 3)
+        # Because samples from Window 1 were cleared, median is -70, not affected by -59
+        self.assertLess(pipe.filtered_rssi, -64)
+
+    def test_in_window_impulse_outlier_rejection(self):
+        """Multipath null impulse spikes (>15 dBm deviation) must be filtered in-window."""
+        pipe = AdvancedSignalFilterPipeline()
+        pipe.start_window()
+        # 4 clean samples around -60 dBm, 1 severe multipath null at -85 dBm (-25 dBm dev)
+        pipe.add_raw_sample(-60, 1000)
+        pipe.add_raw_sample(-59, 1050)
+        pipe.add_raw_sample(-85, 1100)  # Impulse spike
+        pipe.add_raw_sample(-61, 1150)
+        pipe.add_raw_sample(-60, 1200)
+        pipe.process_cycle(1300)
+        # Outlier -85 dBm must be rejected from inliers, median must be -60
+        self.assertEqual(pipe.filtered_rssi, -60)
+        self.assertEqual(pipe.distance_cm, 111)
+
+    def test_adaptive_ema_fast_tracking_vs_slow_smoothing(self):
+        """Verifies fast alpha=0.60 on step change and slow alpha=0.25 when stationary."""
+        pipe = AdvancedSignalFilterPipeline()
+        # Establish baseline at -60 dBm
+        pipe.start_window()
+        pipe.add_raw_sample(-60, 1000)
+        pipe.process_cycle(1100)
+        self.assertEqual(pipe.ema_rssi, -60.0)
+
+        # 1. Step change of 10 dBm (movement to -70 dBm): delta = 10 > 4 -> alpha=0.60
+        pipe.start_window()
+        pipe.add_raw_sample(-70, 2000)
+        pipe.process_cycle(2100)
+        # ema = 0.60 * (-70) + 0.40 * (-60) = -42 - 24 = -66.0 dBm
+        self.assertAlmostEqual(pipe.ema_rssi, -66.0, places=2)
+
+        # 2. Small step of 1 dBm (stationary at -67 dBm): delta = 1 <= 4 -> alpha=0.25
+        pipe.start_window()
+        pipe.add_raw_sample(-67, 3000)
+        pipe.process_cycle(3100)
+        # ema = 0.25 * (-67) + 0.75 * (-66) = -16.75 - 49.50 = -66.25 dBm
+        self.assertAlmostEqual(pipe.ema_rssi, -66.25, places=2)
+
+    def test_ema_clean_initialization(self):
+        """First valid sample initializes EMA directly without artificial jumps."""
+        pipe = AdvancedSignalFilterPipeline()
+        self.assertIsNone(pipe.ema_rssi)
+        pipe.start_window()
+        pipe.add_raw_sample(-64, 1000)
+        pipe.process_cycle(1100)
+        self.assertEqual(pipe.ema_rssi, -64.0, "First sample must initialize EMA directly")
+        self.assertEqual(pipe.filtered_rssi, -64)
+
+    def test_zero_samples_window_stale_and_offline(self):
+        """Zero samples in window preserves previous distance and ages to STALE then OFFLINE."""
+        pipe = AdvancedSignalFilterPipeline()
+        # Initialize node at t=1000 ms
+        pipe.start_window()
+        pipe.add_raw_sample(-59, 1000)
+        pipe.process_cycle(1050)
+        self.assertEqual(pipe.state, STATE_ACTIVE)
+        self.assertEqual(pipe.distance_cm, 100)
+
+        # Window at t=1500 ms (elapsed 500 ms): 0 samples -> still ACTIVE (<1200ms), distance preserved
+        pipe.start_window()
+        pipe.process_cycle(1500)
+        self.assertEqual(pipe.state, STATE_ACTIVE)
+        self.assertEqual(pipe.distance_cm, 100)
+
+        # Window at t=2500 ms (elapsed 1500 ms): 0 samples -> STALE (1200-3500ms), distance preserved
+        pipe.start_window()
+        pipe.process_cycle(2500)
+        self.assertEqual(pipe.state, STATE_STALE)
+        self.assertEqual(pipe.distance_cm, 100, "Stale state must preserve last valid distance")
+
+        # Window at t=5000 ms (elapsed 4000 ms): 0 samples -> OFFLINE (>3500ms), distance set to sentinel
+        pipe.start_window()
+        pipe.process_cycle(5000)
+        self.assertEqual(pipe.state, STATE_OFFLINE)
+        self.assertEqual(pipe.distance_cm, SHAPNEST_DISTANCE_OFFLINE_CM)
+        self.assertEqual(pipe.filtered_rssi, SHAPNEST_RSSI_OFFLINE)
+
+    def test_per_node_calibration_math(self):
+        """Verifies that nodes with different physical A and n produce correct distances."""
+        # Node 1 (Fan): Calibrated A = -56 dBm, n = 2.0
+        pipe1 = AdvancedSignalFilterPipeline(refA=-56, expN=2.0)
+        pipe1.start_window()
+        pipe1.add_raw_sample(-56, 1000)
+        pipe1.process_cycle(1100)
+        self.assertEqual(pipe1.distance_cm, 100)  # Exactly 1.00m at A
+
+        # Node 2 (Iron): Calibrated A = -62 dBm, n = 2.5
+        pipe2 = AdvancedSignalFilterPipeline(refA=-62, expN=2.5)
+        pipe2.start_window()
+        pipe2.add_raw_sample(-62, 1000)
+        pipe2.process_cycle(1100)
+        self.assertEqual(pipe2.distance_cm, 100)  # Exactly 1.00m at A
+
+        # Node 2 at -74.5 dBm -> exponent = (-62 - (-74.5)) / (25) = 12.5 / 25 = 0.5 -> 10^0.5 = 3.16m
+        pipe2.start_window()
+        pipe2.add_raw_sample(-75, 2000)
+        pipe2.process_cycle(2100)
+        self.assertGreater(pipe2.distance_cm, 200)
 
 
 class TestCentralHubNDJSONIntegration(unittest.TestCase):
@@ -239,15 +432,14 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
 
     def test_end_to_end_packet_to_ndjson(self):
         """Simulates full RX -> Unpack -> NDJSON Serialization pipeline."""
-        # 1. Assemble 31-byte raw BLE packet
         header = struct.pack("<BBB BB H B B B B",
                              0x02, 0x01, 0x06,
                              0x1B, 0xFF,
                              SHAPNEST_PROTOCOL_ID,
                              SHAPNEST_FRAME_TYPE_WRISTBAND_TEL,
-                             1,  # Wristband 1
+                             1,   # Wristband 1
                              105, # Sequence 105
-                             5)  # 5 nodes
+                             5)   # 5 nodes
         
         node_data = [
             {"id": 1, "state": STATE_ACTIVE, "dist_cm": 82,  "rssi": -57},
@@ -265,8 +457,6 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
         raw_ble_packet = header + payload
         self.assertEqual(len(raw_ble_packet), 31)
         
-        # 2. Simulate Central Hub Core 0 parsing
-        # Validate Magic and Type
         co_id = struct.unpack_from("<H", raw_ble_packet, 5)[0]
         ftype = raw_ble_packet[7]
         self.assertEqual(co_id, 0x534E)
@@ -279,7 +469,6 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
         self.assertEqual(seq, 105)
         self.assertEqual(node_cnt, 5)
         
-        # 3. Simulate Central Hub Core 1 NDJSON Formatting
         nodes_json_list = []
         for i in range(5):
             offset = 11 + i * 4
@@ -312,7 +501,6 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
         ndjson_line = json.dumps(ndjson_obj)
         self.assertTrue(ndjson_line.startswith('{"type": "telemetry"'))
         
-        # 4. Simulate Web App JSON.parse() and Validation
         parsed_app_obj = json.loads(ndjson_line)
         self.assertEqual(parsed_app_obj["wristband_id"], 1)
         self.assertEqual(len(parsed_app_obj["nodes"]), 5)
@@ -343,19 +531,12 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
                 return f"{dist_cm} cm"
             return f"{dist_m:.2f} m"
 
-        # Active node at 0.82m / 82cm
         self.assertEqual(format_distance(0.82, 82, "ACTIVE", "m"), "0.82 m")
         self.assertEqual(format_distance(0.82, 82, "ACTIVE", "cm"), "82 cm")
-
-        # Active node at 1.45m / 145cm
         self.assertEqual(format_distance(1.45, 145, "ACTIVE", "m"), "1.45 m")
         self.assertEqual(format_distance(1.45, 145, "ACTIVE", "cm"), "145 cm")
-
-        # Out-of-range node
         self.assertEqual(format_distance(8.00, 800, "OUT_OF_RANGE", "m"), "> 8.0 m")
         self.assertEqual(format_distance(8.00, 800, "OUT_OF_RANGE", "cm"), "> 800 cm")
-
-        # Offline node
         self.assertEqual(format_distance(None, 65535, "OFFLINE", "m"), "--")
         self.assertEqual(format_distance(None, 65535, "OFFLINE", "cm"), "--")
 
