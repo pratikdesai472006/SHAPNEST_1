@@ -11,8 +11,6 @@
  *   - node_fan  (Node ID 1)
  *   - node_iron (Node ID 2)
  *   - node_door (Node ID 3)
- *   - node_4    (Node ID 4)
- *   - node_5    (Node ID 5)
  * ============================================================================
  */
 
@@ -26,7 +24,7 @@
 // DEFAULT NODE CONFIGURATION (Overridden by specific node_*.ino wrappers)
 // ============================================================================
 #ifndef NODE_ID
-#define NODE_ID                 1     // Set 1..5 in node wrapper
+#define NODE_ID                 1     // Set 1..3 in node wrapper
 #endif
 
 #ifndef CALIBRATED_RSSI_1M
@@ -47,7 +45,7 @@
 
 // Compile-time sanity check on configured Node ID
 #if (NODE_ID < SHAPNEST_NODE_ID_MIN || NODE_ID > SHAPNEST_NODE_ID_MAX)
-#error "NODE_ID must be configured between 1 and 5 for Phase 1!"
+#error "NODE_ID must be configured between 1 and 3 for Phase 1!"
 #endif
 
 // ============================================================================

@@ -33,9 +33,9 @@ extern "C" {
 #define SHAPNEST_FRAME_TYPE_WRISTBAND_TEL    0x02
 
 #define SHAPNEST_TARGET_WRISTBAND_ID         1
-#define SHAPNEST_MAX_NODES                   5
+#define SHAPNEST_MAX_NODES                   3
 #define SHAPNEST_NODE_ID_MIN                 1
-#define SHAPNEST_NODE_ID_MAX                 5
+#define SHAPNEST_NODE_ID_MAX                 3
 
 /* -------------------------------------------------------------------------- */
 /* RF & CALIBRATION DEFAULTS                                                  */
@@ -98,7 +98,7 @@ typedef enum {
 typedef struct {
     uint16_t company_id;           /* 0x534E ('S', 'N') */
     uint8_t  frame_type;           /* 0x01 (NODE_BEACON) */
-    uint8_t  node_id;              /* 1..5 */
+    uint8_t  node_id;              /* 1..3 */
     int8_t   calibrated_rssi_1m;   /* e.g. -59 dBm */
     uint8_t  path_loss_exp_x10;    /* e.g. 22 representing n = 2.2 */
     uint8_t  sequence;             /* Rolling packet counter (0..255) */
@@ -125,27 +125,27 @@ typedef struct {
  * Total Size: Exactly 4 Bytes per node.
  */
 typedef struct {
-    uint8_t  id_and_state;         /* Bits 0..3: Node ID (1..5), Bits 4..5: State (0..2) */
+    uint8_t  id_and_state;         /* Bits 0..3: Node ID (1..3), Bits 4..5: State (0..2) */
     uint16_t distance_cm;          /* Distance in cm (15..800 cm, or 0xFFFF if OFFLINE) */
     int8_t   filtered_rssi;        /* Filtered RSSI in dBm (-128 if OFFLINE) */
 } shapnest_node_telemetry_block_t;
 
 /**
  * Wristband Manufacturer Specific Data Payload (Inside BLE AD Type 0xFF)
- * Total Size: Exactly 26 Bytes.
+ * Total Size: Exactly 18 Bytes (3 Nodes x 4 Bytes + 6 Bytes Header).
  */
 typedef struct {
     uint16_t company_id;           /* 0x534E ('S', 'N') */
     uint8_t  frame_type;           /* 0x02 (WRISTBAND_TELEMETRY) */
     uint8_t  wristband_id;         /* 1 */
     uint8_t  sequence;             /* Rolling sequence counter (0..255) */
-    uint8_t  node_count;           /* 5 */
-    shapnest_node_telemetry_block_t nodes[SHAPNEST_MAX_NODES]; /* 5 * 4 = 20 Bytes */
+    uint8_t  node_count;           /* 3 */
+    shapnest_node_telemetry_block_t nodes[SHAPNEST_MAX_NODES]; /* 3 * 4 = 12 Bytes */
 } shapnest_wristband_payload_t;
 
 /**
  * Complete Wristband BLE Telemetry Packet (Standard 31-Byte PDU)
- * Total Size: Exactly 31 Bytes (Matches Legacy BLE 31-byte limit 100%).
+ * Total Size: Exactly 23 Bytes (8 Bytes headroom under 31-byte BLE limit).
  */
 typedef struct {
     /* BLE Flags AD Structure (3 Bytes) */
@@ -153,10 +153,10 @@ typedef struct {
     uint8_t  flags_type;           /* 0x01 (Flags) */
     uint8_t  flags_data;           /* 0x06 (LE General Discoverable, BR/EDR Not Supported) */
 
-    /* Manufacturer Specific AD Structure (28 Bytes) */
-    uint8_t  mfr_length;           /* 0x1B (27 bytes follow: type + 26 bytes payload) */
+    /* Manufacturer Specific AD Structure (20 Bytes) */
+    uint8_t  mfr_length;           /* 0x13 (19 bytes follow: type + 18 bytes payload) */
     uint8_t  mfr_type;             /* 0xFF (Manufacturer Specific Data) */
-    shapnest_wristband_payload_t payload; /* 26 Bytes */
+    shapnest_wristband_payload_t payload; /* 18 Bytes */
 } shapnest_wristband_telemetry_packet_t;
 
 #pragma pack(pop)
@@ -171,10 +171,10 @@ static_assert(sizeof(shapnest_node_beacon_packet_t) == 12,
               "shapnest_node_beacon_packet_t must be exactly 12 bytes");
 static_assert(sizeof(shapnest_node_telemetry_block_t) == 4, 
               "shapnest_node_telemetry_block_t must be exactly 4 bytes");
-static_assert(sizeof(shapnest_wristband_payload_t) == 26, 
-              "shapnest_wristband_payload_t must be exactly 26 bytes");
-static_assert(sizeof(shapnest_wristband_telemetry_packet_t) == 31, 
-              "shapnest_wristband_telemetry_packet_t must be exactly 31 bytes (BLE limit)");
+static_assert(sizeof(shapnest_wristband_payload_t) == 18, 
+              "shapnest_wristband_payload_t must be exactly 18 bytes");
+static_assert(sizeof(shapnest_wristband_telemetry_packet_t) == 23, 
+              "shapnest_wristband_telemetry_packet_t must be exactly 23 bytes");
 #endif
 
 /* -------------------------------------------------------------------------- */

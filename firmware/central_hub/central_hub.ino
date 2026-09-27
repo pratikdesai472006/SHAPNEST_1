@@ -285,7 +285,7 @@ static void format_and_send_ndjson(bool isWristbandAlive, uint32_t wbAgeMs) {
         isWristbandAlive ? latestWristbandPayload.sequence : 0
     );
 
-    // Iterate across monitored nodes (1..5)
+    // Iterate across monitored nodes (1..3)
     for (uint8_t i = 0; i < SHAPNEST_MAX_NODES; i++) {
         uint8_t expectedNodeId = i + 1;
 

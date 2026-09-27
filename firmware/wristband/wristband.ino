@@ -25,7 +25,7 @@
  *       • Calibrated Log-Distance Path Loss Model: d = 10^((A - RSSI) / (10n)).
  *       • Operational Clamping: 0.15 m floor / 8.00 m ceiling.
  *       • Staleness State Machine: ACTIVE (<1.2s), STALE (1.2-3.5s), OFFLINE (>3.5s).
- *   - Broadcasts the exact 31-byte telemetry frame to the Central Hub at 1 Hz.
+ *   - Broadcasts the 23-byte telemetry frame to the Central Hub at 1 Hz.
  * ============================================================================
  */
 
@@ -73,7 +73,7 @@ struct NodeTracker {
     int8_t   filteredRssi;
 };
 
-// Global Node Trackers (Index 0 = Node 1, Index 4 = Node 5)
+// Global Node Trackers (Index 0 = Node 1 [Fan], Index 1 = Node 2 [Iron], Index 2 = Node 3 [Door])
 static NodeTracker nodeTrackers[SHAPNEST_MAX_NODES];
 
 // Global BLE Objects
@@ -184,7 +184,7 @@ void setup() {
     Serial.println("==================================================");
     Serial.printf("# [LOG] SHAPNEST CHILD WRISTBAND — ESP32-C3 MINI\n");
     Serial.printf("# [LOG] Wristband ID: %d | Protocol: v%d (0x%04X)\n", WRISTBAND_ID, SHAPNEST_PROTOCOL_VERSION, SHAPNEST_PROTOCOL_ID);
-    Serial.printf("# [LOG] Monitored Nodes: %d (NODE_01 to NODE_05)\n", SHAPNEST_MAX_NODES);
+    Serial.printf("# [LOG] Monitored Nodes: %d (NODE_01 to NODE_03: Fan, Iron, Door)\n", SHAPNEST_MAX_NODES);
     Serial.printf("# [LOG] Filter Pipeline: Window Median + Outlier Gate + Adaptive EMA (%.2f/%.2f)\n", 
                   EMA_ALPHA_SLOW, EMA_ALPHA_FAST);
     Serial.printf("# [LOG] Distance Bounds: %.2f m to %.2f m\n", SHAPNEST_DISTANCE_MIN_CM / 100.0f, SHAPNEST_DISTANCE_MAX_CM / 100.0f);
@@ -402,7 +402,7 @@ static void process_signal_conditioning(uint32_t now) {
 }
 
 // ============================================================================
-// ASSEMBLE 31-BYTE TELEMETRY PAYLOAD
+// ASSEMBLE 23-BYTE TELEMETRY PAYLOAD (18 Bytes Mfr Payload)
 // ============================================================================
 static void assemble_uplink_payload() {
     uplinkSeq++;
@@ -423,7 +423,7 @@ static void assemble_uplink_payload() {
         uplinkPayload.nodes[i].filtered_rssi= n->filteredRssi;
     }
 
-    // Load packed 26-byte payload into standard BLE advertisement data structure
+    // Load packed 18-byte payload into standard BLE advertisement data structure
     advData.setFlags(0x06); // LE General Discoverable | BR/EDR Not Supported
     advData.setManufacturerData(std::string((const char*)&uplinkPayload, sizeof(uplinkPayload)));
     pAdvertising->setAdvertisementData(advData);

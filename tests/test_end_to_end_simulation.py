@@ -192,28 +192,26 @@ class TestProtocolSerialization(unittest.TestCase):
         self.assertEqual(unpacked[9], 22)      # Path Loss Exp x10
 
     def test_wristband_telemetry_packet_layout(self):
-        """Wristband telemetry packet must be exactly 31 bytes (Legacy BLE PDU limit)."""
+        """Wristband telemetry packet must be exactly 23 bytes (3 nodes, 8 bytes headroom)."""
         header_fmt = "<BBB BB H B B B B"
         node_block_fmt = "<B H b"  # 4 bytes
         
         header = struct.pack(header_fmt,
                              0x02, 0x01, 0x06,
-                             0x1B, 0xFF,
+                             0x13, 0xFF,
                              SHAPNEST_PROTOCOL_ID,
                              SHAPNEST_FRAME_TYPE_WRISTBAND_TEL,
                              1,  # Wristband ID
                              42, # Sequence
-                             5   # Node count
+                             3   # Node count: exactly 3 nodes
                              )
         self.assertEqual(len(header), 11)
         
         blocks = b""
         test_nodes = [
-            (1, STATE_ACTIVE, 82, -57),
-            (2, STATE_ACTIVE, 145, -63),
-            (3, STATE_STALE, 280, -69),
-            (4, STATE_ACTIVE, 800, -85),
-            (5, STATE_OFFLINE, SHAPNEST_DISTANCE_OFFLINE_CM, SHAPNEST_RSSI_OFFLINE)
+            (1, STATE_ACTIVE, 82, -57),   # Node 1: Fan
+            (2, STATE_ACTIVE, 145, -63),  # Node 2: Iron
+            (3, STATE_STALE, 280, -69)    # Node 3: Door
         ]
         for node_id, state, dist_cm, rssi in test_nodes:
             id_state_byte = pack_id_state(node_id, state)
@@ -222,11 +220,11 @@ class TestProtocolSerialization(unittest.TestCase):
             blocks += block
             
         full_packet = header + blocks
-        self.assertEqual(len(full_packet), 31, "Wristband packet must be exactly 31 bytes")
+        self.assertEqual(len(full_packet), 23, "Wristband packet must be exactly 23 bytes for 3 nodes")
 
     def test_id_and_state_bitfield_packing(self):
-        """Test packing and unpacking of Node ID (0..15) and State (0..3)."""
-        for nid in range(1, 6):
+        """Test packing and unpacking of Node ID (1..3) and State (0..2)."""
+        for nid in range(1, 4):
             for state in [STATE_ACTIVE, STATE_STALE, STATE_OFFLINE]:
                 packed = pack_id_state(nid, state)
                 self.assertEqual(unpack_id(packed), nid)
@@ -428,25 +426,23 @@ class TestAdvancedSignalConditioningPipeline(unittest.TestCase):
 
 
 class TestCentralHubNDJSONIntegration(unittest.TestCase):
-    """Simulates Hub receiving 31-byte binary packet and generating NDJSON for Web App."""
+    """Simulates Hub receiving 23-byte binary packet and generating NDJSON for Web App."""
 
     def test_end_to_end_packet_to_ndjson(self):
-        """Simulates full RX -> Unpack -> NDJSON Serialization pipeline."""
+        """Simulates full RX -> Unpack -> NDJSON Serialization pipeline for 3 nodes."""
         header = struct.pack("<BBB BB H B B B B",
                              0x02, 0x01, 0x06,
-                             0x1B, 0xFF,
+                             0x13, 0xFF,
                              SHAPNEST_PROTOCOL_ID,
                              SHAPNEST_FRAME_TYPE_WRISTBAND_TEL,
                              1,   # Wristband 1
                              105, # Sequence 105
-                             5)   # 5 nodes
+                             3)   # 3 nodes: Fan, Iron, Door
         
         node_data = [
-            {"id": 1, "state": STATE_ACTIVE, "dist_cm": 82,  "rssi": -57},
-            {"id": 2, "state": STATE_ACTIVE, "dist_cm": 145, "rssi": -63},
-            {"id": 3, "state": STATE_STALE,  "dist_cm": 280, "rssi": -69},
-            {"id": 4, "state": STATE_ACTIVE, "dist_cm": 800, "rssi": -85},  # > 8.0m
-            {"id": 5, "state": STATE_OFFLINE,"dist_cm": 65535, "rssi": -128}
+            {"id": 1, "state": STATE_ACTIVE, "dist_cm": 82,  "rssi": -57},  # Fan
+            {"id": 2, "state": STATE_ACTIVE, "dist_cm": 145, "rssi": -63},  # Iron
+            {"id": 3, "state": STATE_STALE,  "dist_cm": 280, "rssi": -69}   # Door
         ]
         
         payload = b""
@@ -455,7 +451,7 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
             payload += struct.pack("<B H b", id_st, nd["dist_cm"], nd["rssi"])
             
         raw_ble_packet = header + payload
-        self.assertEqual(len(raw_ble_packet), 31)
+        self.assertEqual(len(raw_ble_packet), 23)
         
         co_id = struct.unpack_from("<H", raw_ble_packet, 5)[0]
         ftype = raw_ble_packet[7]
@@ -467,10 +463,10 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
         node_cnt = raw_ble_packet[10]
         self.assertEqual(wb_id, 1)
         self.assertEqual(seq, 105)
-        self.assertEqual(node_cnt, 5)
+        self.assertEqual(node_cnt, 3)
         
         nodes_json_list = []
-        for i in range(5):
+        for i in range(3):
             offset = 11 + i * 4
             id_st_b, dist_cm_u16, rssi_i8 = struct.unpack_from("<B H b", raw_ble_packet, offset)
             n_id = unpack_id(id_st_b)
@@ -503,22 +499,18 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
         
         parsed_app_obj = json.loads(ndjson_line)
         self.assertEqual(parsed_app_obj["wristband_id"], 1)
-        self.assertEqual(len(parsed_app_obj["nodes"]), 5)
+        self.assertEqual(len(parsed_app_obj["nodes"]), 3)
         
-        # Node 1: 0.82 m / 82 cm
+        # Node 1 (Fan): 0.82 m / 82 cm
         self.assertEqual(parsed_app_obj["nodes"][0]["distance"], 0.82)
         self.assertEqual(parsed_app_obj["nodes"][0]["state"], "ACTIVE")
         
-        # Node 3: STALE
+        # Node 2 (Iron): 1.45 m / 145 cm
+        self.assertEqual(parsed_app_obj["nodes"][1]["distance"], 1.45)
+        self.assertEqual(parsed_app_obj["nodes"][1]["state"], "ACTIVE")
+        
+        # Node 3 (Door): STALE
         self.assertEqual(parsed_app_obj["nodes"][2]["state"], "STALE")
-        
-        # Node 4: OUT_OF_RANGE (> 8.0m)
-        self.assertEqual(parsed_app_obj["nodes"][3]["state"], "OUT_OF_RANGE")
-        self.assertEqual(parsed_app_obj["nodes"][3]["distance_cm"], 800)
-        
-        # Node 5: OFFLINE
-        self.assertIsNone(parsed_app_obj["nodes"][4]["distance"])
-        self.assertEqual(parsed_app_obj["nodes"][4]["state"], "OFFLINE")
 
     def test_dynamic_unit_conversion_display_logic(self):
         """Verifies that unit toggle 'm' <-> 'cm' converts display strings correctly without mutating data."""
