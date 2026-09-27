@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SHAPNEST — Proximity Distance Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- DEMO / SIMULATION MODE PERSISTENT WATERMARK (HIDDEN IN NORMAL MODE) -->
+  <aside id="simulation-banner" class="sim-banner hidden" aria-live="polite">
+    <div class="sim-banner-content">
+      <span class="sim-icon">⚠️</span>
+      <span class="sim-text"><strong>DEMO / SIMULATION MODE — SYNTHETIC DATA</strong> (PHYSICAL HARDWARE INACTIVE)</span>
+      <button id="btn-exit-sim" class="btn-exit-sim" title="Stop simulation and return to real hardware">Exit Demo</button>
+    </div>
+  </aside>
+
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-logo">
+        <span class="logo-radar"></span>
+        <span class="logo-dot"></span>
+      </div>
+      <div class="brand-titles">
+        <h1 class="brand-title">SHAPNEST</h1>
+        <p class="brand-subtitle">MULTI-NODE PROXIMITY &amp; DISTANCE MONITOR &bull; PHASE 1 PROTOTYPE</p>
+      </div>
+    </div>
+
+    <!-- GLOBAL CONTROLS & ACTIONS -->
+    <div class="header-actions">
+      <!-- DYNAMIC DISTANCE DISPLAY UNIT SELECTOR -->
+      <div class="control-group unit-selector-group">
+        <span class="control-label">UNIT:</span>
+        <div class="unit-toggle" role="group" aria-label="Distance unit selection">
+          <button id="unit-btn-m" class="unit-btn active" data-unit="m">m</button>
+          <button id="unit-btn-cm" class="unit-btn" data-unit="cm">cm</button>
+        </div>
+      </div>
+
+      <!-- CONNECTION ACTION BUTTONS -->
+      <div class="connection-buttons">
+        <button id="btn-connect-hub" class="btn btn-primary" title="Connect to ESP32-WROOM Central Hub via USB Serial">
+          <span class="btn-icon">🔌</span>
+          <span class="btn-text">Connect Hub (USB Serial)</span>
+        </button>
+
+        <button id="btn-scan-ble" class="btn btn-secondary" title="Scan SHAPNEST Nodes directly via Web Bluetooth for validation">
+          <span class="btn-icon">📡</span>
+          <span class="btn-text">Scan Nodes (Web BLE)</span>
+        </button>
+
+        <button id="btn-toggle-sim" class="btn btn-warning" title="Run offline synthetic simulation demo">
+          <span class="btn-icon">🧪</span>
+          <span class="btn-text">Run Demo Sim</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- TELEMETRY & HARDWARE STATUS BAR -->
+  <section class="status-ribbon">
+    <div class="status-card" id="status-hub">
+      <div class="status-indicator-dot dot-offline"></div>
+      <div class="status-meta">
+        <span class="status-label">CENTRAL HUB (ESP32-WROOM)</span>
+        <span class="status-value" id="val-hub-status">DISCONNECTED</span>
+      </div>
+      <span class="status-tag" id="tag-hub-port">NO PORT</span>
+    </div>
+
+    <div class="status-card" id="status-wristband">
+      <div class="status-indicator-dot dot-offline"></div>
+      <div class="status-meta">
+        <span class="status-label">CHILD WRISTBAND (ESP32-C3)</span>
+        <span class="status-value" id="val-wb-status">WAITING FOR HUB</span>
+      </div>
+      <span class="status-tag" id="tag-wb-age">AGE: ---</span>
+    </div>
+
+    <div class="status-card" id="status-local-ble">
+      <div class="status-indicator-dot dot-offline"></div>
+      <div class="status-meta">
+        <span class="status-label">DIRECT PHONE / BROWSER BLE</span>
+        <span class="status-value" id="val-ble-status">OFFLINE</span>
+      </div>
+      <span class="status-tag" id="tag-ble-count">0 NODES SEEN</span>
+    </div>
+
+    <div class="status-card status-card-meta">
+      <div class="status-meta">
+        <span class="status-label">TELEMETRY STREAM STATS</span>
+        <span class="status-value font-mono" id="val-telemetry-stats">SEQ: 0 &bull; 0.0 Hz</span>
+      </div>
+      <button id="btn-toggle-terminal" class="btn-terminal-toggle" title="Toggle diagnostic serial terminal">Terminal</button>
+    </div>
+  </section>
+
+  <!-- COLLAPSIBLE DIAGNOSTIC TERMINAL -->
+  <section id="terminal-panel" class="terminal-panel hidden">
+    <div class="terminal-header">
+      <span class="terminal-title">📟 ESP32-WROOM DIAGNOSTIC SERIAL STREAM (# [LOG], [WARN], [ERROR])</span>
+      <div class="terminal-actions">
+        <button id="btn-clear-terminal" class="terminal-btn">Clear</button>
+        <button id="btn-close-terminal" class="terminal-btn">Close</button>
+      </div>
+    </div>
+    <div id="terminal-output" class="terminal-output font-mono">
+      <div class="term-line term-dim"># [LOG] Web Serial Terminal initialized. Ready for USB connection at 115,200 baud.</div>
+    </div>
+  </section>
+
+  <!-- ENVIRONMENTAL PATH-LOSS TUNING BAR -->
+  <section class="tuning-bar">
+    <div class="tuning-control">
+      <div class="tuning-label-group">
+        <span class="tuning-label">PATH-LOSS EXPONENT (n) OVERRIDE:</span>
+        <span class="tuning-note font-mono" id="val-n-override">INACTIVE (Using Node-Broadcast Default)</span>
+      </div>
+      <div class="tuning-slider-wrap">
+        <input type="checkbox" id="chk-override-n" class="tuning-checkbox">
+        <label for="chk-override-n" class="tuning-checkbox-label">Enable Override</label>
+        <input type="range" id="slider-override-n" min="1.6" max="3.0" step="0.1" value="2.2" disabled>
+        <span class="slider-val font-mono" id="slider-n-display">2.2</span>
+      </div>
+    </div>
+    <div class="bounds-indicator">
+      <span class="bounds-text">Operational Bounds: <strong>0.15 m – 8.00 m</strong> (Clamped floor &bull; Max reported as &gt; 8.0 m)</span>
+    </div>
+  </section>
+
+  <!-- MAIN MULTI-NODE DISTANCE CARDS GRID -->
+  <main class="dashboard-grid">
+
+    <!-- NODE 01 CARD -->
+    <article class="node-card" id="card-node-1" data-node="1">
+      <div class="card-header">
+        <div class="node-badge">
+          <span class="node-index">01</span>
+          <div class="node-names">
+            <h2 class="node-title">NODE_01</h2>
+            <span class="node-subtitle">Fixed Reference Point</span>
+          </div>
+        </div>
+        <div class="node-state-pill pill-offline" id="pill-node-1">OFFLINE</div>
+      </div>
+
+      <!-- DUAL PERSPECTIVE COLUMNS -->
+      <div class="card-columns">
+        <!-- WRISTBAND VIA HUB PERSPECTIVE -->
+        <div class="perspective-col col-wristband">
+          <div class="col-header">
+            <span class="perspective-tag tag-wb">🧒 WRISTBAND (VIA HUB)</span>
+            <span class="freshness-badge font-mono" id="wb-freshness-1">--</span>
+          </div>
+
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="wb-dist-1">---</span>
+            <span class="distance-unit font-mono" id="wb-unit-1">m</span>
+          </div>
+
+          <div class="progress-track" title="Proximity Indicator (0.15m to 8.0m)">
+            <div class="progress-bar" id="wb-bar-1" style="width: 0%;"></div>
+          </div>
+
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="wb-rssi-1">-- dBm</strong></span>
+            <span class="metric-item">Ref A: <strong class="font-mono" id="wb-ref-1">-- dBm</strong></span>
+            <span class="metric-item">n: <strong class="font-mono" id="wb-n-1">--</strong></span>
+          </div>
+        </div>
+
+        <!-- DIRECT PHONE / BROWSER BLE PERSPECTIVE -->
+        <div class="perspective-col col-direct">
+          <div class="col-header">
+            <span class="perspective-tag tag-direct">📱 DIRECT BROWSER BLE</span>
+            <span class="freshness-badge font-mono" id="ble-freshness-1">--</span>
+          </div>
+
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="ble-dist-1">---</span>
+            <span class="distance-unit font-mono" id="ble-unit-1">m</span>
+          </div>
+
+          <div class="progress-track">
+            <div class="progress-bar progress-bar-direct" id="ble-bar-1" style="width: 0%;"></div>
+          </div>
+
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-1">-- dBm</strong></span>
+            <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-1">0</strong></span>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- NODE 02 CARD -->
+    <article class="node-card" id="card-node-2" data-node="2">
+      <div class="card-header">
+        <div class="node-badge">
+          <span class="node-index">02</span>
+          <div class="node-names">
+            <h2 class="node-title">NODE_02</h2>
+            <span class="node-subtitle">Fixed Reference Point</span>
+          </div>
+        </div>
+        <div class="node-state-pill pill-offline" id="pill-node-2">OFFLINE</div>
+      </div>
+
+      <div class="card-columns">
+        <div class="perspective-col col-wristband">
+          <div class="col-header">
+            <span class="perspective-tag tag-wb">🧒 WRISTBAND (VIA HUB)</span>
+            <span class="freshness-badge font-mono" id="wb-freshness-2">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="wb-dist-2">---</span>
+            <span class="distance-unit font-mono" id="wb-unit-2">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="wb-bar-2" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="wb-rssi-2">-- dBm</strong></span>
+            <span class="metric-item">Ref A: <strong class="font-mono" id="wb-ref-2">-- dBm</strong></span>
+            <span class="metric-item">n: <strong class="font-mono" id="wb-n-2">--</strong></span>
+          </div>
+        </div>
+
+        <div class="perspective-col col-direct">
+          <div class="col-header">
+            <span class="perspective-tag tag-direct">📱 DIRECT BROWSER BLE</span>
+            <span class="freshness-badge font-mono" id="ble-freshness-2">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="ble-dist-2">---</span>
+            <span class="distance-unit font-mono" id="ble-unit-2">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar progress-bar-direct" id="ble-bar-2" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-2">-- dBm</strong></span>
+            <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-2">0</strong></span>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- NODE 03 CARD -->
+    <article class="node-card" id="card-node-3" data-node="3">
+      <div class="card-header">
+        <div class="node-badge">
+          <span class="node-index">03</span>
+          <div class="node-names">
+            <h2 class="node-title">NODE_03</h2>
+            <span class="node-subtitle">Fixed Reference Point</span>
+          </div>
+        </div>
+        <div class="node-state-pill pill-offline" id="pill-node-3">OFFLINE</div>
+      </div>
+
+      <div class="card-columns">
+        <div class="perspective-col col-wristband">
+          <div class="col-header">
+            <span class="perspective-tag tag-wb">🧒 WRISTBAND (VIA HUB)</span>
+            <span class="freshness-badge font-mono" id="wb-freshness-3">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="wb-dist-3">---</span>
+            <span class="distance-unit font-mono" id="wb-unit-3">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="wb-bar-3" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="wb-rssi-3">-- dBm</strong></span>
+            <span class="metric-item">Ref A: <strong class="font-mono" id="wb-ref-3">-- dBm</strong></span>
+            <span class="metric-item">n: <strong class="font-mono" id="wb-n-3">--</strong></span>
+          </div>
+        </div>
+
+        <div class="perspective-col col-direct">
+          <div class="col-header">
+            <span class="perspective-tag tag-direct">📱 DIRECT BROWSER BLE</span>
+            <span class="freshness-badge font-mono" id="ble-freshness-3">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="ble-dist-3">---</span>
+            <span class="distance-unit font-mono" id="ble-unit-3">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar progress-bar-direct" id="ble-bar-3" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-3">-- dBm</strong></span>
+            <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-3">0</strong></span>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- NODE 04 CARD -->
+    <article class="node-card" id="card-node-4" data-node="4">
+      <div class="card-header">
+        <div class="node-badge">
+          <span class="node-index">04</span>
+          <div class="node-names">
+            <h2 class="node-title">NODE_04</h2>
+            <span class="node-subtitle">Fixed Reference Point</span>
+          </div>
+        </div>
+        <div class="node-state-pill pill-offline" id="pill-node-4">OFFLINE</div>
+      </div>
+
+      <div class="card-columns">
+        <div class="perspective-col col-wristband">
+          <div class="col-header">
+            <span class="perspective-tag tag-wb">🧒 WRISTBAND (VIA HUB)</span>
+            <span class="freshness-badge font-mono" id="wb-freshness-4">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="wb-dist-4">---</span>
+            <span class="distance-unit font-mono" id="wb-unit-4">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="wb-bar-4" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="wb-rssi-4">-- dBm</strong></span>
+            <span class="metric-item">Ref A: <strong class="font-mono" id="wb-ref-4">-- dBm</strong></span>
+            <span class="metric-item">n: <strong class="font-mono" id="wb-n-4">--</strong></span>
+          </div>
+        </div>
+
+        <div class="perspective-col col-direct">
+          <div class="col-header">
+            <span class="perspective-tag tag-direct">📱 DIRECT BROWSER BLE</span>
+            <span class="freshness-badge font-mono" id="ble-freshness-4">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="ble-dist-4">---</span>
+            <span class="distance-unit font-mono" id="ble-unit-4">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar progress-bar-direct" id="ble-bar-4" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-4">-- dBm</strong></span>
+            <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-4">0</strong></span>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- NODE 05 CARD -->
+    <article class="node-card" id="card-node-5" data-node="5">
+      <div class="card-header">
+        <div class="node-badge">
+          <span class="node-index">05</span>
+          <div class="node-names">
+            <h2 class="node-title">NODE_05</h2>
+            <span class="node-subtitle">Fixed Reference Point</span>
+          </div>
+        </div>
+        <div class="node-state-pill pill-offline" id="pill-node-5">OFFLINE</div>
+      </div>
+
+      <div class="card-columns">
+        <div class="perspective-col col-wristband">
+          <div class="col-header">
+            <span class="perspective-tag tag-wb">🧒 WRISTBAND (VIA HUB)</span>
+            <span class="freshness-badge font-mono" id="wb-freshness-5">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="wb-dist-5">---</span>
+            <span class="distance-unit font-mono" id="wb-unit-5">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="wb-bar-5" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="wb-rssi-5">-- dBm</strong></span>
+            <span class="metric-item">Ref A: <strong class="font-mono" id="wb-ref-5">-- dBm</strong></span>
+            <span class="metric-item">n: <strong class="font-mono" id="wb-n-5">--</strong></span>
+          </div>
+        </div>
+
+        <div class="perspective-col col-direct">
+          <div class="col-header">
+            <span class="perspective-tag tag-direct">📱 DIRECT BROWSER BLE</span>
+            <span class="freshness-badge font-mono" id="ble-freshness-5">--</span>
+          </div>
+          <div class="distance-hero">
+            <span class="distance-number font-mono" id="ble-dist-5">---</span>
+            <span class="distance-unit font-mono" id="ble-unit-5">m</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar progress-bar-direct" id="ble-bar-5" style="width: 0%;"></div>
+          </div>
+          <div class="metrics-row">
+            <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-5">-- dBm</strong></span>
+            <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-5">0</strong></span>
+          </div>
+        </div>
+      </div>
+    </article>
+
+  </main>
+
+  <footer class="app-footer">
+    <div class="footer-left">
+      <span>SHAPNEST Multi-Node Distance Engine &bull; Protocol v1</span>
+    </div>
+    <div class="footer-right">
+      <span id="footer-status-text">Ready for USB Serial or Web BLE connection</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
