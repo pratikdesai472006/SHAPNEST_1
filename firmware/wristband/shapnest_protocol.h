@@ -6,13 +6,13 @@
  * SHAPNEST — PHASE 1 MASTER PROTOCOL SPECIFICATION
  * 
  * Target Architectures:
- *   - Nodes:      ESP32-C3 Mini (32-bit RISC-V)
- *   - Wristband:  ESP32-C3 Mini (32-bit RISC-V)
- *   - Hub:        ESP32-WROOM   (32-bit Xtensa LX6 Dual-Core)
- *   - App:        Modern Web Application (Web Serial / Web Bluetooth)
+ *   - Nodes:      ESP32-C3 Mini (32-bit RISC-V) - Fan, Iron, Door
+ *   - Wristband:  ESP32-C3 Mini (32-bit RISC-V) - Portable Telemetry
+ *   - Hub:        ELIMINATED (Direct Mobile BLE Architecture)
+ *   - App:        Flutter Mobile App (Direct BLE Scanner + Kalman Filter Engine)
  * 
  * All structures are strictly byte-packed (#pragma pack(push, 1)) to prevent
- * cross-compiler alignment discrepancies between RISC-V and Xtensa.
+ * cross-compiler alignment discrepancies between RISC-V architectures.
  * ============================================================================
  */
 
