@@ -56,17 +56,13 @@
       nodesSeen: new Set()
     },
 
-    // Multi-Node Internal Telemetry Data Table (Nodes 1..5)
+    // Multi-Node Internal Telemetry Data Table (Nodes 1..3: Fan, Iron, Door)
     nodes: {
       1: { wb: { dist_m: null, rssi: null, state: 'OFFLINE', refA: null, n: null, lastSeen: 0 },
            ble: { dist_m: null, rssi: null, pkts: 0, refA: -59, n: 2.2, lastSeen: 0 } },
       2: { wb: { dist_m: null, rssi: null, state: 'OFFLINE', refA: null, n: null, lastSeen: 0 },
            ble: { dist_m: null, rssi: null, pkts: 0, refA: -59, n: 2.2, lastSeen: 0 } },
       3: { wb: { dist_m: null, rssi: null, state: 'OFFLINE', refA: null, n: null, lastSeen: 0 },
-           ble: { dist_m: null, rssi: null, pkts: 0, refA: -59, n: 2.2, lastSeen: 0 } },
-      4: { wb: { dist_m: null, rssi: null, state: 'OFFLINE', refA: null, n: null, lastSeen: 0 },
-           ble: { dist_m: null, rssi: null, pkts: 0, refA: -59, n: 2.2, lastSeen: 0 } },
-      5: { wb: { dist_m: null, rssi: null, state: 'OFFLINE', refA: null, n: null, lastSeen: 0 },
            ble: { dist_m: null, rssi: null, pkts: 0, refA: -59, n: 2.2, lastSeen: 0 } }
     },
 
@@ -557,7 +553,7 @@
       }
 
       // Re-render
-      for (let id = 1; id <= 5; id++) renderNodeCard(id);
+      for (let id = 1; id <= 3; id++) renderNodeCard(id);
     });
 
     dom.sliderOverrideN.addEventListener('input', (e) => {
@@ -565,7 +561,7 @@
       dom.sliderNDisplay.textContent = state.nOverrideValue.toFixed(1);
       dom.valNOverride.textContent = `ACTIVE (Override n = ${state.nOverrideValue.toFixed(1)})`;
 
-      for (let id = 1; id <= 5; id++) renderNodeCard(id);
+      for (let id = 1; id <= 3; id++) renderNodeCard(id);
     });
   }
 
@@ -605,21 +601,19 @@
 
     appendTerminal('⚠️ [WARN] DEMO / SIMULATION MODE ACTIVATED — All measurements are synthetic!', 'term-warn');
 
-    // 2D Spatial positions of the 5 nodes in a virtual 6m x 6m room
+    // 2D Spatial positions of the 3 nodes in a virtual room
     const nodeCoords = {
-      1: { x: 1.0, y: 1.0 },
-      2: { x: 5.0, y: 1.0 },
-      3: { x: 5.0, y: 5.0 },
-      4: { x: 1.0, y: 5.0 },
-      5: { x: 3.0, y: 3.0 }
+      1: { x: 1.0, y: 1.0 }, // Fan
+      2: { x: 5.0, y: 1.5 }, // Iron
+      3: { x: 3.0, y: 5.0 }  // Door
     };
 
     state.simTimer = setInterval(() => {
       state.simAngle += 0.08;
 
-      // Virtual child moves in a smooth Lissajous figure around room
+      // Virtual child moves in a smooth figure around room
       const childX = 3.0 + 1.8 * Math.cos(state.simAngle);
-      const childY = 3.0 + 1.8 * Math.sin(state.simAngle * 1.5);
+      const childY = 2.8 + 1.5 * Math.sin(state.simAngle * 1.5);
 
       const simTelemetry = {
         v: 1,
@@ -634,7 +628,7 @@
         nodes: []
       };
 
-      for (let id = 1; id <= 5; id++) {
+      for (let id = 1; id <= 3; id++) {
         const nPos = nodeCoords[id];
         const trueDist = Math.sqrt(Math.pow(childX - nPos.x, 2) + Math.pow(childY - nPos.y, 2));
 
@@ -685,7 +679,7 @@
     dom.dotBle.className = 'status-indicator-dot dot-offline';
 
     // Clear synthetic data
-    for (let id = 1; id <= 5; id++) {
+    for (let id = 1; id <= 3; id++) {
       state.nodes[id].wb.dist_m = null;
       state.nodes[id].wb.rssi = null;
       state.nodes[id].wb.state = 'OFFLINE';
@@ -788,7 +782,7 @@
   function updateFreshnessUI() {
     const now = Date.now();
 
-    for (let id = 1; id <= 5; id++) {
+    for (let id = 1; id <= 3; id++) {
       const wbFreshness = document.getElementById(`wb-freshness-${id}`);
       const bleFreshness = document.getElementById(`ble-freshness-${id}`);
 

@@ -45,3 +45,12 @@ $RECYCLE.BIN/
 # Logs and runtime artifacts
 *.log
 scratch/
+
+# Flutter and Gradle artifacts
+.dart_tool/
+.flutter-plugins-dependencies
+build/
+**/build/
+**/.gradle/
+**/.dart_tool/
+**/local.properties

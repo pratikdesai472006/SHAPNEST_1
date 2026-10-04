@@ -20,7 +20,7 @@
 #endif
 
 #ifndef TX_POWER_DBM
-#define TX_POWER_DBM            3     // RF output power: +3 dBm
+#define TX_POWER_DBM            9     // RF output power: +9 dBm (Max link budget)
 #endif
 
 #ifndef STATUS_LED_PIN

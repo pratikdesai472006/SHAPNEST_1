@@ -1,33 +1,35 @@
-# SHAPNEST — Phase 1: Interactive Multi-Node Distance Measurement & Central Hub Prototype
+# SHAPNEST — Phase 1: Interactive Multi-Node Distance Measurement & Flutter Mobile App
 
-A real-time, multi-node Bluetooth Low Energy (BLE) proximity and distance estimation prototype for child tracking. The system measures distances between an ESP32-C3 child wristband and five ESP32-C3 spatial anchor nodes, transmits aggregated 31-byte telemetry to an ESP32-WROOM Central Hub, and displays live multi-node distances on a modern web application over USB Serial (115,200 baud).
+A real-time, multi-node Bluetooth Low Energy (BLE) proximity and distance estimation system for child tracking. The system measures distances between an ESP32-C3 child wristband and three ESP32-C3 spatial anchor nodes, features direct BLE scanning from a native Flutter Android mobile application with 1D Adaptive Kalman Filtering, in-app 1-meter calibration, and eliminates the legacy ESP32-WROOM central hub bridge completely.
 
 ```
 +-----------------------------------------------------------------------------------+
-|                            SHAPNEST PHASE 1 ARCHITECTURE                          |
+|                        SHAPNEST DIRECT BLE ARCHITECTURE                           |
 +-----------------------------------------------------------------------------------+
 |                                                                                   |
-|  [Node 1] (0.82m) ---\                                                            |
-|  [Node 2] (1.45m) ----\                                                           |
-|  [Node 3] (2.10m) -----+--> [Child Wristband]                                     |
-|  [Node 4] (3.80m) ----/      (ESP32-C3 Mini)                                      |
-|  [Node 5] (8.00m) ---/       - 900 ms Dedicated Scan                              |
-|                              - 5-Sample Median + EMA (alpha=0.25)                 |
-|                              - 31-byte Telemetry Uplink (1 Hz)                    |
-|                                       |                                           |
-|                                       v (BLE Broadcast)                           |
-|                             [Central Hub]                                         |
-|                              (ESP32-WROOM-32)                                     |
-|                              - Core 0: 100% Continuous BLE Passive Scan           |
-|                              - Core 1: NDJSON Serializer (115,200 baud)           |
-|                                       |                                           |
-|                                       v (USB Serial)                              |
-|                            [Web Display Application]                              |
-|                             (Vanilla HTML5/CSS3/ES6)                              |
-|                             - Real-time 5-Node Radar Dashboard                    |
-|                             - Dynamic Units Toggle (m <-> cm)                     |
-|                             - Virtual Simulator [DEMO MODE]                       |
-|                             - Diagnostic Console (# [LOG])                        |
+|  [Node 1: Fan]  (0.82m) ---\                                                      |
+|  [Node 2: Iron] (1.45m) ----+--> [Child Wristband]                                |
+|  [Node 3: Door] (2.10m) ---/     (ESP32-C3 Mini)                                  |
+|                                  - 900 ms Dedicated Scan                          |
+|                                  - In-Window Median + Adaptive EMA Filter         |
+|                                  - 23-byte Direct BLE Telemetry Uplink (1 Hz)     |
+|                                           |                                       |
+|                                           | (Over-The-Air BLE Broadcast)          |
+|                                           v                                       |
+|                         [SHAPNEST Flutter Android App]                            |
+|                        - NO HUB / NO ESP32-WROOM REQUIRED                         |
+|                        - Direct 2.4 GHz BLE Hardware Scanning                     |
+|                        - Dual Tracking Modes:                                     |
+|                            • Direct Phone Tracking (Phone <-> Nodes)              |
+|                            • Child Wristband Tracking (Child <-> Nodes)           |
+|                        - 1D Adaptive Kalman Filter (Multipath Noise Rejection)    |
+|                        - In-App 1-Meter Calibration Wizard                        |
+|                        - Environmental Path Loss Factor (n) Presets & Tuning      |
+|                        - Real-time 3-Node Interactive Radar Display               |
+|                        - Proximity Danger Alert Zones (Iron < 0.8m, Fan < 0.6m)   |
+|                        - Dynamic Units Toggle (m <-> cm)                          |
+|                        - Built-in Virtual Simulator [DEMO MODE]                   |
+|                        - Diagnostic Console & APK Sharing                         |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -85,7 +87,7 @@ Double-click `prototype_distance/app/start_app.bat`.
 This automatically starts a local static server on `http://localhost:8000` and launches your default browser.
 
 ### Option B: Manual Command Line
-```powershell
+```powershell  
 cd e:\SHAPNEST\prototype_distance\app
 python -m http.server 8000
 # Open Google Chrome or Microsoft Edge to: http://localhost:8000

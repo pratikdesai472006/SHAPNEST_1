@@ -7,7 +7,6 @@ src_map = {
     "node_iron": os.path.join("firmware", "node_iron"),
     "node_door": os.path.join("firmware", "node_door"),
     "wristband": os.path.join("firmware", "wristband"),
-    "central_hub": os.path.join("firmware", "central_hub"),
 }
 
 if env_name in src_map:

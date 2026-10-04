@@ -36,7 +36,7 @@
 #endif
 
 #ifndef TX_POWER_DBM
-#define TX_POWER_DBM            3     // RF output power: +3 dBm
+#define TX_POWER_DBM            9     // RF output power: +9 dBm (Max link budget)
 #endif
 
 #ifndef STATUS_LED_PIN
@@ -132,9 +132,9 @@ static void initialize_autonomous_beacon() {
     // Initialize NimBLE stack
     NimBLEDevice::init(deviceName);
 
-    // Set physical TX output power to +3 dBm for advertising and default
-    NimBLEDevice::setPower(ESP_PWR_LVL_P3, ESP_BLE_PWR_TYPE_ADV);
-    NimBLEDevice::setPower(ESP_PWR_LVL_P3, ESP_BLE_PWR_TYPE_DEFAULT);
+    // Set physical TX output power to +9 dBm for advertising and default
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_ADV);
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_DEFAULT);
 
     // Retrieve global advertising controller
     pAdvertising = NimBLEDevice::getAdvertising();

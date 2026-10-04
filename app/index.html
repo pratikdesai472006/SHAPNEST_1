@@ -137,14 +137,14 @@
   <!-- MAIN MULTI-NODE DISTANCE CARDS GRID -->
   <main class="dashboard-grid">
 
-    <!-- NODE 01 CARD -->
+    <!-- NODE 01 CARD: FAN -->
     <article class="node-card" id="card-node-1" data-node="1">
       <div class="card-header">
         <div class="node-badge">
           <span class="node-index">01</span>
           <div class="node-names">
-            <h2 class="node-title">NODE_01</h2>
-            <span class="node-subtitle">Fixed Reference Point</span>
+            <h2 class="node-title">NODE_01 (FAN)</h2>
+            <span class="node-subtitle">Proximity Anchor &bull; node_fan</span>
           </div>
         </div>
         <div class="node-state-pill pill-offline" id="pill-node-1">OFFLINE</div>
@@ -199,14 +199,14 @@
       </div>
     </article>
 
-    <!-- NODE 02 CARD -->
+    <!-- NODE 02 CARD: IRON -->
     <article class="node-card" id="card-node-2" data-node="2">
       <div class="card-header">
         <div class="node-badge">
           <span class="node-index">02</span>
           <div class="node-names">
-            <h2 class="node-title">NODE_02</h2>
-            <span class="node-subtitle">Fixed Reference Point</span>
+            <h2 class="node-title">NODE_02 (IRON)</h2>
+            <span class="node-subtitle">Proximity Anchor &bull; node_iron</span>
           </div>
         </div>
         <div class="node-state-pill pill-offline" id="pill-node-2">OFFLINE</div>
@@ -252,14 +252,14 @@
       </div>
     </article>
 
-    <!-- NODE 03 CARD -->
+    <!-- NODE 03 CARD: DOOR -->
     <article class="node-card" id="card-node-3" data-node="3">
       <div class="card-header">
         <div class="node-badge">
           <span class="node-index">03</span>
           <div class="node-names">
-            <h2 class="node-title">NODE_03</h2>
-            <span class="node-subtitle">Fixed Reference Point</span>
+            <h2 class="node-title">NODE_03 (DOOR)</h2>
+            <span class="node-subtitle">Proximity Anchor &bull; node_door</span>
           </div>
         </div>
         <div class="node-state-pill pill-offline" id="pill-node-3">OFFLINE</div>
@@ -300,112 +300,6 @@
           <div class="metrics-row">
             <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-3">-- dBm</strong></span>
             <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-3">0</strong></span>
-          </div>
-        </div>
-      </div>
-    </article>
-
-    <!-- NODE 04 CARD -->
-    <article class="node-card" id="card-node-4" data-node="4">
-      <div class="card-header">
-        <div class="node-badge">
-          <span class="node-index">04</span>
-          <div class="node-names">
-            <h2 class="node-title">NODE_04</h2>
-            <span class="node-subtitle">Fixed Reference Point</span>
-          </div>
-        </div>
-        <div class="node-state-pill pill-offline" id="pill-node-4">OFFLINE</div>
-      </div>
-
-      <div class="card-columns">
-        <div class="perspective-col col-wristband">
-          <div class="col-header">
-            <span class="perspective-tag tag-wb">🧒 WRISTBAND (VIA HUB)</span>
-            <span class="freshness-badge font-mono" id="wb-freshness-4">--</span>
-          </div>
-          <div class="distance-hero">
-            <span class="distance-number font-mono" id="wb-dist-4">---</span>
-            <span class="distance-unit font-mono" id="wb-unit-4">m</span>
-          </div>
-          <div class="progress-track">
-            <div class="progress-bar" id="wb-bar-4" style="width: 0%;"></div>
-          </div>
-          <div class="metrics-row">
-            <span class="metric-item">RSSI: <strong class="font-mono" id="wb-rssi-4">-- dBm</strong></span>
-            <span class="metric-item">Ref A: <strong class="font-mono" id="wb-ref-4">-- dBm</strong></span>
-            <span class="metric-item">n: <strong class="font-mono" id="wb-n-4">--</strong></span>
-          </div>
-        </div>
-
-        <div class="perspective-col col-direct">
-          <div class="col-header">
-            <span class="perspective-tag tag-direct">📱 DIRECT BROWSER BLE</span>
-            <span class="freshness-badge font-mono" id="ble-freshness-4">--</span>
-          </div>
-          <div class="distance-hero">
-            <span class="distance-number font-mono" id="ble-dist-4">---</span>
-            <span class="distance-unit font-mono" id="ble-unit-4">m</span>
-          </div>
-          <div class="progress-track">
-            <div class="progress-bar progress-bar-direct" id="ble-bar-4" style="width: 0%;"></div>
-          </div>
-          <div class="metrics-row">
-            <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-4">-- dBm</strong></span>
-            <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-4">0</strong></span>
-          </div>
-        </div>
-      </div>
-    </article>
-
-    <!-- NODE 05 CARD -->
-    <article class="node-card" id="card-node-5" data-node="5">
-      <div class="card-header">
-        <div class="node-badge">
-          <span class="node-index">05</span>
-          <div class="node-names">
-            <h2 class="node-title">NODE_05</h2>
-            <span class="node-subtitle">Fixed Reference Point</span>
-          </div>
-        </div>
-        <div class="node-state-pill pill-offline" id="pill-node-5">OFFLINE</div>
-      </div>
-
-      <div class="card-columns">
-        <div class="perspective-col col-wristband">
-          <div class="col-header">
-            <span class="perspective-tag tag-wb">🧒 WRISTBAND (VIA HUB)</span>
-            <span class="freshness-badge font-mono" id="wb-freshness-5">--</span>
-          </div>
-          <div class="distance-hero">
-            <span class="distance-number font-mono" id="wb-dist-5">---</span>
-            <span class="distance-unit font-mono" id="wb-unit-5">m</span>
-          </div>
-          <div class="progress-track">
-            <div class="progress-bar" id="wb-bar-5" style="width: 0%;"></div>
-          </div>
-          <div class="metrics-row">
-            <span class="metric-item">RSSI: <strong class="font-mono" id="wb-rssi-5">-- dBm</strong></span>
-            <span class="metric-item">Ref A: <strong class="font-mono" id="wb-ref-5">-- dBm</strong></span>
-            <span class="metric-item">n: <strong class="font-mono" id="wb-n-5">--</strong></span>
-          </div>
-        </div>
-
-        <div class="perspective-col col-direct">
-          <div class="col-header">
-            <span class="perspective-tag tag-direct">📱 DIRECT BROWSER BLE</span>
-            <span class="freshness-badge font-mono" id="ble-freshness-5">--</span>
-          </div>
-          <div class="distance-hero">
-            <span class="distance-number font-mono" id="ble-dist-5">---</span>
-            <span class="distance-unit font-mono" id="ble-unit-5">m</span>
-          </div>
-          <div class="progress-track">
-            <div class="progress-bar progress-bar-direct" id="ble-bar-5" style="width: 0%;"></div>
-          </div>
-          <div class="metrics-row">
-            <span class="metric-item">RSSI: <strong class="font-mono" id="ble-rssi-5">-- dBm</strong></span>
-            <span class="metric-item">Packets: <strong class="font-mono" id="ble-pkts-5">0</strong></span>
           </div>
         </div>
       </div>

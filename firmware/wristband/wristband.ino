@@ -267,8 +267,8 @@ void loop() {
 // ============================================================================
 static void initialize_ble_subsystem() {
     NimBLEDevice::init("SHAPNEST_WB1");
-    NimBLEDevice::setPower(ESP_PWR_LVL_P3, ESP_BLE_PWR_TYPE_ADV);
-    NimBLEDevice::setPower(ESP_PWR_LVL_P3, ESP_BLE_PWR_TYPE_DEFAULT);
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_ADV);
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_DEFAULT);
 
     // 1. Configure Scanner
     pScan = NimBLEDevice::getScan();
@@ -446,8 +446,9 @@ static void print_diagnostic_heartbeat(uint32_t now) {
     for (uint8_t i = 0; i < SHAPNEST_MAX_NODES; i++) {
         NodeTracker* n = &nodeTrackers[i];
         if (n->state == SHAPNEST_NODE_STATE_ACTIVE) {
-            Serial.printf("# [LOG]   NODE_0%d: %.2f m | RSSI: %d dBm | Samples: %u | ACTIVE\n",
-                          i + 1, shapnest_cm_to_meters(n->distanceCm), n->filteredRssi, n->windowCount);
+            Serial.printf("# [LOG]   NODE_0%d: %.2f m | Filtered RSSI: %d dBm | Samples: %u | RefA@1m: %d dBm | n: %.1f\n",
+                          i + 1, shapnest_cm_to_meters(n->distanceCm), n->filteredRssi, n->windowCount,
+                          n->calibratedRefA, (n->pathLossExpX10 > 0 ? n->pathLossExpX10 / 10.0f : 2.2f));
         } else if (n->state == SHAPNEST_NODE_STATE_STALE) {
             Serial.printf("# [WARN]  NODE_0%d: %.2f m (STALE, last seen %u ms ago)\n",
                           i + 1, shapnest_cm_to_meters(n->distanceCm), now - n->lastSeenMs);
