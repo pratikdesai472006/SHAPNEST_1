@@ -40,6 +40,8 @@ class _RadarViewState extends State<RadarView> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return AnimatedBuilder(
       animation: _animController,
       builder: (context, child) {
@@ -51,6 +53,7 @@ class _RadarViewState extends State<RadarView> with SingleTickerProviderStateMix
             unit: widget.unit,
             sweepAngle: _animController.value * 2 * pi,
             pulseValue: _animController.value,
+            isDark: isDark,
           ),
         );
       },
@@ -64,6 +67,7 @@ class RadarPainter extends CustomPainter {
   final String unit;
   final double sweepAngle;
   final double pulseValue;
+  final bool isDark;
 
   RadarPainter({
     required this.nodes,
@@ -71,6 +75,7 @@ class RadarPainter extends CustomPainter {
     required this.unit,
     required this.sweepAngle,
     required this.pulseValue,
+    required this.isDark,
   });
 
   @override
@@ -78,21 +83,34 @@ class RadarPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final maxRadius = min(size.width / 2, size.height / 2) - 24;
 
-    // 1. Radar Background Glow
+    // 1. Radar Background Radial Fill
     final bgPaint = Paint()
       ..shader = RadialGradient(
-        colors: [
-          const Color(0xFF0F172A).withValues(alpha: 0.9),
-          const Color(0xFF020617),
-        ],
+        colors: isDark
+            ? [
+                const Color(0xFF0F172A).withValues(alpha: 0.9),
+                const Color(0xFF020617),
+              ]
+            : [
+                Colors.white,
+                const Color(0xFFE2E8F0),
+              ],
       ).createShader(Rect.fromCircle(center: center, radius: maxRadius));
     canvas.drawCircle(center, maxRadius, bgPaint);
 
+    // Subtle outline border around the entire radar disc
+    final borderPaint = Paint()
+      ..color = isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(center, maxRadius, borderPaint);
+
     // 2. Concentric Distance Grid Rings
-    // Representing 1.0m, 2.0m, 3.0m, 5.0m, 8.0m (max)
-    final ringDistancesM = [1.0, 2.0, 3.5, 5.0, 8.0];
+    final ringDistancesM = [0.3, 1.0, 2.0, 3.5, 5.0, 8.0];
     final ringPaint = Paint()
-      ..color = const Color(0xFF334155).withValues(alpha: 0.6)
+      ..color = isDark
+          ? const Color(0xFF334155).withValues(alpha: 0.6)
+          : const Color(0xFF94A3B8).withValues(alpha: 0.5)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
 
@@ -105,7 +123,7 @@ class RadarPainter extends CustomPainter {
       final textSpan = TextSpan(
         text: label,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.35),
+          color: isDark ? Colors.white38 : const Color(0xFF64748B),
           fontSize: 9,
           fontWeight: FontWeight.w600,
         ),
@@ -119,16 +137,20 @@ class RadarPainter extends CustomPainter {
 
     // 3. Crosshairs
     final crossHairPaint = Paint()
-      ..color = const Color(0xFF1E293B)
+      ..color = isDark
+          ? const Color(0xFF1E293B).withValues(alpha: 0.8)
+          : const Color(0xFFE2E8F0).withValues(alpha: 0.9)
       ..strokeWidth = 1.0;
     canvas.drawLine(Offset(center.dx - maxRadius, center.dy), Offset(center.dx + maxRadius, center.dy), crossHairPaint);
     canvas.drawLine(Offset(center.dx, center.dy - maxRadius), Offset(center.dx, center.dy + maxRadius), crossHairPaint);
 
-    // 4. Rotating Radar Sweep Line
+    // 4. Rotating Radar Sweep Beam
     final sweepEnd = Offset(
       center.dx + maxRadius * cos(sweepAngle),
       center.dy + maxRadius * sin(sweepAngle),
     );
+    final sweepBeamColor = isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7);
+
     final sweepPaint = Paint()
       ..shader = SweepGradient(
         center: FractionalOffset.center,
@@ -136,34 +158,37 @@ class RadarPainter extends CustomPainter {
         endAngle: sweepAngle,
         colors: [
           Colors.transparent,
-          const Color(0xFF00E5FF).withValues(alpha: 0.25),
+          sweepBeamColor.withValues(alpha: isDark ? 0.25 : 0.18),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: maxRadius))
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, maxRadius, sweepPaint);
 
     final linePaint = Paint()
-      ..color = const Color(0xFF00E5FF).withValues(alpha: 0.5)
+      ..color = sweepBeamColor.withValues(alpha: isDark ? 0.5 : 0.4)
       ..strokeWidth = 1.5;
     canvas.drawLine(center, sweepEnd, linePaint);
 
     // 5. Center Avatar (Phone or Child Wristband)
+    final centerColor = (trackingSource == TrackingSource.directPhone
+        ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7))
+        : const Color(0xFFA855F7));
+
     final centerGlow = Paint()
-      ..color = (trackingSource == TrackingSource.directPhone ? const Color(0xFF38BDF8) : const Color(0xFFA855F7))
-          .withValues(alpha: 0.3)
+      ..color = centerColor.withValues(alpha: isDark ? 0.3 : 0.2)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, 18 + pulseValue * 6, centerGlow);
 
     final centerDot = Paint()
-      ..color = (trackingSource == TrackingSource.directPhone ? const Color(0xFF38BDF8) : const Color(0xFFA855F7))
+      ..color = centerColor
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, 8, centerDot);
 
     // 6. Draw Nodes (Fan, Iron, Door at radial bearings: 90°, 210°, 330°)
     final angles = [
-      -pi / 2, // Top (Fan)
-      pi / 6, // Bottom right (Iron)
-      5 * pi / 6, // Bottom left (Door)
+      -pi / 2,     // Top (Fan)
+      pi / 6,      // Bottom right (Iron)
+      5 * pi / 6,  // Bottom left (Door)
     ];
 
     for (int i = 0; i < nodes.length; i++) {
@@ -185,21 +210,21 @@ class RadarPainter extends CustomPainter {
       );
 
       final isDanger = isOnline && node.isDanger(distM);
+      final markerColor = isDanger
+          ? const Color(0xFFFF1744)
+          : (isOnline ? node.primaryColor : const Color(0xFF94A3B8));
 
       // Node Marker Glow
       if (isOnline) {
         final nodeGlow = Paint()
-          ..color = (isDanger ? const Color(0xFFFF5252) : node.primaryColor)
-              .withValues(alpha: isDanger ? 0.6 : 0.35)
+          ..color = markerColor.withValues(alpha: isDanger ? 0.6 : (isDark ? 0.35 : 0.25))
           ..style = PaintingStyle.fill;
         canvas.drawCircle(nodePos, 14 + (isDanger ? pulseValue * 8 : 0), nodeGlow);
       }
 
       // Node Marker Core
       final nodeCore = Paint()
-        ..color = isOnline
-            ? (isDanger ? const Color(0xFFFF5252) : node.primaryColor)
-            : const Color(0xFF64748B)
+        ..color = markerColor
         ..style = PaintingStyle.fill;
       canvas.drawCircle(nodePos, isOnline ? 9 : 6, nodeCore);
 
@@ -213,7 +238,9 @@ class RadarPainter extends CustomPainter {
           TextSpan(
             text: '${node.name}\n',
             style: TextStyle(
-              color: isOnline ? Colors.white : Colors.white54,
+              color: isOnline
+                  ? (isDark ? Colors.white : const Color(0xFF0F172A))
+                  : (isDark ? Colors.white54 : const Color(0xFF94A3B8)),
               fontSize: 10,
               fontWeight: FontWeight.bold,
             ),
@@ -221,9 +248,7 @@ class RadarPainter extends CustomPainter {
           TextSpan(
             text: distStr,
             style: TextStyle(
-              color: isDanger
-                  ? const Color(0xFFFF5252)
-                  : (isOnline ? node.primaryColor : Colors.white38),
+              color: markerColor,
               fontSize: 11,
               fontWeight: FontWeight.w900,
             ),

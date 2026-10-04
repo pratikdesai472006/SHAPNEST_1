@@ -9,13 +9,16 @@ class DiagnosticSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return AnimatedBuilder(
       animation: bleService,
       builder: (context, child) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF020617),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           ),
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
           child: Column(
@@ -27,7 +30,7 @@ class DiagnosticSheet extends StatelessWidget {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF334155),
+                    color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -38,14 +41,18 @@ class DiagnosticSheet extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Row(
+                  Row(
                     children: [
-                      Icon(Icons.terminal, color: Color(0xFF38BDF8), size: 20),
-                      SizedBox(width: 8),
+                      Icon(
+                        Icons.terminal,
+                        color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
                       Text(
                         'Live Diagnostic Console',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: theme.colorScheme.onSurface,
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
@@ -55,7 +62,11 @@ class DiagnosticSheet extends StatelessWidget {
                   Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.share, color: Color(0xFF38BDF8), size: 20),
+                        icon: Icon(
+                          Icons.share,
+                          color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
+                          size: 20,
+                        ),
                         tooltip: 'Share Diagnostic Logs',
                         onPressed: () {
                           if (bleService.diagnosticLogs.isNotEmpty) {
@@ -69,7 +80,7 @@ class DiagnosticSheet extends StatelessWidget {
                         },
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white60),
+                        icon: Icon(Icons.close, color: theme.colorScheme.onSurfaceVariant),
                         onPressed: () => Navigator.pop(context),
                       ),
                     ],
@@ -82,9 +93,11 @@ class DiagnosticSheet extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0F172A),
+                  color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF1E293B)),
+                  border: Border.all(
+                    color: isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0),
+                  ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -93,16 +106,28 @@ class DiagnosticSheet extends StatelessWidget {
                       children: [
                         Text(
                           node.name,
-                          style: TextStyle(color: node.primaryColor, fontSize: 11, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: node.primaryColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           '${node.packetsPerSecond.toStringAsFixed(1)} Hz',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                          ),
                         ),
                         Text(
                           '${node.packetCount} pkts',
-                          style: const TextStyle(color: Colors.white38, fontSize: 10),
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            fontSize: 10,
+                          ),
                         ),
                       ],
                     );
@@ -118,9 +143,11 @@ class DiagnosticSheet extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0B132B),
+                    color: const Color(0xFF0F172A), // Dark terminal background for optimal log readability
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF1E293B)),
+                    border: Border.all(
+                      color: isDark ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1),
+                    ),
                   ),
                   child: bleService.diagnosticLogs.isEmpty
                       ? const Center(

@@ -236,6 +236,7 @@ class BleService extends ChangeNotifier {
 
         node.directDistanceM = distRes.distanceMeters;
         node.directFilteredRssi = distRes.filteredRssi;
+        node.directMotionState = distRes.motionState;
 
         // Check if Calibration Wizard is actively recording this node
         if (activeCalibration != null && activeCalibration!.nodeId == nodeId && !activeCalibration!.isCompleted) {

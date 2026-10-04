@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../services/distance_engine.dart';
+import '../services/kalman_filter.dart';
 import 'shapnest_protocol.dart';
 
 class NodeData {
@@ -6,7 +8,7 @@ class NodeData {
   final String name;
   final IconData icon;
   final Color primaryColor;
-  final double dangerDistanceM; // Trigger proximity alarm
+  final double dangerDistanceM; // Specific hazard boundary for this node
 
   // Direct Phone-to-Node Measurements
   double? directDistanceM;
@@ -14,6 +16,7 @@ class NodeData {
   int? directFilteredRssi;
   DateTime? directLastSeen;
   NodeState directState;
+  FilterMotionState directMotionState;
 
   // Wristband-Reported Measurements (Child-to-Node)
   double? wbDistanceM;
@@ -44,6 +47,7 @@ class NodeData {
     this.directFilteredRssi,
     this.directLastSeen,
     this.directState = NodeState.offline,
+    this.directMotionState = FilterMotionState.stationary,
     this.wbDistanceM,
     this.wbFilteredRssi,
     this.wbLastSeen,
@@ -55,7 +59,25 @@ class NodeData {
   /// Check whether the node is currently in the danger zone
   bool isDanger(double? distanceM) {
     if (distanceM == null) return false;
-    return distanceM <= dangerDistanceM;
+    return distanceM <= dangerDistanceM || distanceM <= 1.00;
+  }
+
+  /// Classify distance into standard SHAPNEST Safety Zones:
+  /// - 0–30 cm: Critical Danger
+  /// - 30–100 cm: Danger
+  /// - 100–200 cm: Warning
+  /// - >200 cm: Safe
+  ProximityZone? getZone(double? distanceM) {
+    if (distanceM == null) return null;
+    if (distanceM <= 0.30) {
+      return ProximityZone.criticalDanger;
+    } else if (distanceM <= 1.00) {
+      return ProximityZone.danger;
+    } else if (distanceM <= 2.00) {
+      return ProximityZone.warning;
+    } else {
+      return ProximityZone.safe;
+    }
   }
 
   /// Create predefined default nodes
