@@ -1,0 +1,36 @@
+# Flutter / Dart
+**/.dart_tool/
+**/build/
+**/.pub-cache/
+**/.pub/
+**/.flutter-plugins-dependencies
+**/shapnest_app.iml
+
+# PlatformIO
+**/.pio/
+**/.pioenvs/
+**/.piolibdeps/
+
+# Build artifacts & Binaries
+*.apk
+*.aab
+*.exe
+*.o
+*.bin
+*.elf
+
+# Screenshots & Temporary Debug Images
+screen*.png
+phone_screen.png
+
+# IDE & Editor
+.idea/
+**/.idea/
+*.iml
+.vscode/
+**/.vscode/
+
+# OS generated
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
