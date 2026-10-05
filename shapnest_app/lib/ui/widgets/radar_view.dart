@@ -105,8 +105,24 @@ class RadarPainter extends CustomPainter {
       ..strokeWidth = 1.5;
     canvas.drawCircle(center, maxRadius, borderPaint);
 
-    // 2. Concentric Distance Grid Rings
-    final ringDistancesM = [0.3, 1.0, 2.0, 3.5, 5.0, 8.0];
+    // 2. Safety Zone Shading (Dangerous Zone < 0.30m, Yellow Zone 0.30m - 0.67m)
+    final rDanger = (0.30 / ShapnestProtocol.distanceMaxM) * maxRadius;
+    final rYellow = (0.67 / ShapnestProtocol.distanceMaxM) * maxRadius;
+
+    // Yellow Zone annulus (0.30m - 0.67m)
+    final yellowPaint = Paint()
+      ..color = const Color(0xFFFFEA00).withValues(alpha: isDark ? 0.08 : 0.06)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, rYellow, yellowPaint);
+
+    // Dangerous Zone disc (< 0.30m)
+    final dangerPaint = Paint()
+      ..color = const Color(0xFFFF1744).withValues(alpha: isDark ? 0.14 : 0.10)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, rDanger, dangerPaint);
+
+    // 3. Concentric Distance Grid Rings
+    final ringDistancesM = [0.3, 0.67, 1.5, 3.0, 5.0, 8.0];
     final ringPaint = Paint()
       ..color = isDark
           ? const Color(0xFF334155).withValues(alpha: 0.6)
@@ -119,7 +135,9 @@ class RadarPainter extends CustomPainter {
       canvas.drawCircle(center, r, ringPaint);
 
       // Ring Distance Text Label
-      final label = unit == 'm' ? '${dist.toStringAsFixed(1)}m' : '${(dist * 100).toInt()}cm';
+      final label = dist == 0.67
+          ? (unit == 'm' ? '0.67m' : '67cm')
+          : (unit == 'm' ? '${dist.toStringAsFixed(1)}m' : '${(dist * 100).toInt()}cm');
       final textSpan = TextSpan(
         text: label,
         style: TextStyle(

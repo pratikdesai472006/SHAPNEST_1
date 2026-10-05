@@ -36,15 +36,18 @@ class NodeCard extends StatelessWidget {
 
     final isOnline = state != NodeState.offline && distM != null;
     final zone = isOnline ? node.getZone(distM) : null;
-    final isDanger = isOnline && (zone == ProximityZone.criticalDanger || zone == ProximityZone.danger);
+    final isDanger = isOnline && (zone == ProximityZone.danger);
+    final isWarning = isOnline && (zone == ProximityZone.warning);
 
     // Dynamic Card Border & Background Colors
     final cardBg = isDark ? const Color(0xFF1E293B) : Colors.white;
     final borderColor = isDanger
         ? const Color(0xFFFF1744)
-        : (isOnline
-            ? (isDark ? node.primaryColor.withValues(alpha: 0.5) : node.primaryColor.withValues(alpha: 0.6))
-            : (isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)));
+        : (isWarning
+            ? const Color(0xFFFFEA00)
+            : (isOnline
+                ? (isDark ? node.primaryColor.withValues(alpha: 0.5) : node.primaryColor.withValues(alpha: 0.6))
+                : (isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0))));
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -53,15 +56,17 @@ class NodeCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: borderColor,
-          width: isDanger ? 2.0 : 1.2,
+          width: isDanger ? 2.0 : (isWarning ? 1.8 : 1.2),
         ),
         boxShadow: [
           BoxShadow(
             color: isDanger
                 ? const Color(0xFFFF1744).withValues(alpha: 0.25)
-                : (isOnline
-                    ? node.primaryColor.withValues(alpha: isDark ? 0.12 : 0.08)
-                    : (isDark ? Colors.black26 : Colors.black.withValues(alpha: 0.04))),
+                : (isWarning
+                    ? const Color(0xFFFFEA00).withValues(alpha: 0.20)
+                    : (isOnline
+                        ? node.primaryColor.withValues(alpha: isDark ? 0.12 : 0.08)
+                        : (isDark ? Colors.black26 : Colors.black.withValues(alpha: 0.04)))),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
@@ -69,31 +74,57 @@ class NodeCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // Danger Alert Ribbon
+          // Danger Alert Ribbon (< 30 cm)
           if (isDanger)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-              decoration: BoxDecoration(
-                color: zone == ProximityZone.criticalDanger
-                    ? const Color(0xFFFF1744)
-                    : const Color(0xFFFF9100),
-                borderRadius: const BorderRadius.only(
+              decoration: const BoxDecoration(
+                color: Color(0xFFFF1744),
+                borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(18),
                   topRight: Radius.circular(18),
                 ),
               ),
-              child: Row(
+              child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
-                  const SizedBox(width: 6),
+                  Icon(Icons.dangerous_rounded, color: Colors.white, size: 16),
+                  SizedBox(width: 6),
                   Text(
-                    zone == ProximityZone.criticalDanger
-                        ? 'CRITICAL PROXIMITY HAZARD (< 30 cm)!'
-                        : 'PROXIMITY DANGER ZONE (30–100 cm)!',
-                    style: const TextStyle(
+                    'DANGEROUS PROXIMITY ZONE (< 30 cm)!',
+                    style: TextStyle(
                       color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Yellow Warning Ribbon (30 - 67 cm)
+          if (isWarning)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+              decoration: const BoxDecoration(
+                color: Color(0xFFFFD600),
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(18),
+                  topRight: Radius.circular(18),
+                ),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.black, size: 16),
+                  SizedBox(width: 6),
+                  Text(
+                    'YELLOW ZONE (30–67 cm)',
+                    style: TextStyle(
+                      color: Colors.black,
                       fontSize: 11,
                       fontWeight: FontWeight.w900,
                       letterSpacing: 0.8,
@@ -301,7 +332,7 @@ class NodeCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          '1m: ${node.calibratedA} dBm | n: ${node.pathLossExpN.toStringAsFixed(1)}',
+                          '1m: ${(trackingSource == TrackingSource.directPhone ? node.directCalibratedA : node.wbCalibratedA)} dBm | n: ${node.pathLossExpN.toStringAsFixed(1)}',
                           style: TextStyle(
                             color: theme.colorScheme.onSurfaceVariant,
                             fontSize: 11,

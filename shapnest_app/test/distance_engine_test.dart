@@ -11,38 +11,29 @@ void main() {
   });
 
   group('Safety Zone Classifications', () {
-    test('Standard zone boundaries', () {
-      final resCritical = DistanceResult(
+    test('Standard zone boundaries (<0.3m Danger, 0.3-0.67m Yellow, >0.67m Safe)', () {
+      final resDanger = DistanceResult(
         distanceMeters: 0.25,
         filteredRssi: -50,
         rawRssi: -50,
         motionState: FilterMotionState.stationary,
         isClamped: false,
       );
-      expect(resCritical.zone, equals(ProximityZone.criticalDanger));
+      expect(resDanger.zone, equals(ProximityZone.danger));
 
-      final resDanger = DistanceResult(
-        distanceMeters: 0.70,
+      final resYellow = DistanceResult(
+        distanceMeters: 0.50,
         filteredRssi: -55,
         rawRssi: -55,
         motionState: FilterMotionState.stationary,
         isClamped: false,
       );
-      expect(resDanger.zone, equals(ProximityZone.danger));
+      expect(resYellow.zone, equals(ProximityZone.warning));
 
-      final resWarning = DistanceResult(
+      final resSafe = DistanceResult(
         distanceMeters: 1.50,
         filteredRssi: -62,
         rawRssi: -62,
-        motionState: FilterMotionState.stationary,
-        isClamped: false,
-      );
-      expect(resWarning.zone, equals(ProximityZone.warning));
-
-      final resSafe = DistanceResult(
-        distanceMeters: 2.50,
-        filteredRssi: -68,
-        rawRssi: -68,
         motionState: FilterMotionState.stationary,
         isClamped: false,
       );
@@ -57,7 +48,7 @@ void main() {
 
       // Seed with initial 1.0m signal (-59 dBm)
       for (int i = 0; i < 5; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -59);
+        engine.processRssi(nodeId: nodeId, rawRssi: -59, customA: -59);
       }
 
       // Simulate 20 noisy samples with realistic +/- 3 dBm Rayleigh fading
@@ -68,7 +59,7 @@ void main() {
 
       final recordedDistances = <double>[];
       for (final raw in noisySamples) {
-        final res = engine.processRssi(nodeId: nodeId, rawRssi: raw);
+        final res = engine.processRssi(nodeId: nodeId, rawRssi: raw, customA: -59);
         recordedDistances.add(res.distanceMeters);
       }
 
@@ -88,12 +79,12 @@ void main() {
 
       // Start stationary at ~2.0m (-66 dBm)
       for (int i = 0; i < 5; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -66);
+        engine.processRssi(nodeId: nodeId, rawRssi: -66, customA: -59);
       }
 
       // Sudden jump closer to ~0.5m (-53 dBm) — child stepped to hot iron
-      final stepRes1 = engine.processRssi(nodeId: nodeId, rawRssi: -53);
-      final stepRes2 = engine.processRssi(nodeId: nodeId, rawRssi: -53);
+      final stepRes1 = engine.processRssi(nodeId: nodeId, rawRssi: -53, customA: -59);
+      final stepRes2 = engine.processRssi(nodeId: nodeId, rawRssi: -53, customA: -59);
 
       // Fast attack must trigger immediately
       expect(stepRes1.motionState, equals(FilterMotionState.fastAttack));
@@ -108,13 +99,13 @@ void main() {
 
       // Start at 0.5m (-53 dBm)
       for (int i = 0; i < 5; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -53);
+        engine.processRssi(nodeId: nodeId, rawRssi: -53, customA: -59);
       }
 
       // Move away to 2.5m (-68 dBm)
-      engine.processRssi(nodeId: nodeId, rawRssi: -68);
-      engine.processRssi(nodeId: nodeId, rawRssi: -68);
-      final res3 = engine.processRssi(nodeId: nodeId, rawRssi: -68);
+      engine.processRssi(nodeId: nodeId, rawRssi: -68, customA: -59);
+      engine.processRssi(nodeId: nodeId, rawRssi: -68, customA: -59);
+      final res3 = engine.processRssi(nodeId: nodeId, rawRssi: -68, customA: -59);
 
       expect(res3.distanceMeters, greaterThan(1.30));
     });

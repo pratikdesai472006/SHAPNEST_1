@@ -6,34 +6,29 @@ import 'kalman_filter.dart';
 
 /// Standard SHAPNEST Proximity Safety Classification
 enum ProximityZone {
-  criticalDanger, // 0 - 30 cm
-  danger,         // 30 - 100 cm
-  warning,        // 100 - 200 cm
-  safe;           // > 200 cm
+  danger,  // < 30 cm (Dangerous Zone - Red)
+  warning, // 30 cm - 67 cm (Yellow Zone)
+  safe;    // > 67 cm (Safe Zone - Green)
 
   String get displayName {
     switch (this) {
-      case ProximityZone.criticalDanger:
-        return 'CRITICAL DANGER';
       case ProximityZone.danger:
-        return 'DANGER';
+        return 'DANGEROUS ZONE';
       case ProximityZone.warning:
-        return 'WARNING';
+        return 'YELLOW ZONE';
       case ProximityZone.safe:
-        return 'SAFE';
+        return 'SAFE ZONE';
     }
   }
 
   Color get color {
     switch (this) {
-      case ProximityZone.criticalDanger:
-        return const Color(0xFFFF1744); // Neon Red
       case ProximityZone.danger:
-        return const Color(0xFFFF9100); // Amber/Orange
+        return const Color(0xFFFF1744); // Neon Red (< 30cm)
       case ProximityZone.warning:
-        return const Color(0xFFFFEA00); // Yellow
+        return const Color(0xFFFFEA00); // Yellow (30cm - 67cm)
       case ProximityZone.safe:
-        return const Color(0xFF00E676); // Mint Green
+        return const Color(0xFF00E676); // Mint Green (> 67cm)
     }
   }
 }
@@ -53,11 +48,14 @@ class DistanceEngine {
   // Velocity limiting
   final Map<int, double> _lastCalculatedDistances = {};
   final Map<int, DateTime> _lastCalculationTimes = {};
-  static const double _maxRetreatSpeedMps = 2.5; // Walking away
-  static const double _maxApproachSpeedMps = 3.5; // Fast step toward hazard
+  static const double _maxRetreatSpeedMps = 3.5; // Walking away
+  static const double _maxApproachSpeedMps = 4.5; // Fast step toward hazard
 
-  // Per-node calibrated 1m reference RSSI (A)
+  // Per-node calibrated 1m reference RSSI (A) for Direct Phone Link
   final Map<int, int> _calibratedA = {};
+
+  // Per-node calibrated 1m reference RSSI (A) for Child Wristband Link
+  final Map<int, int> _wbCalibratedA = {};
 
   // Environmental path loss exponent (n)
   double globalPathLossN = 2.2;
@@ -67,6 +65,7 @@ class DistanceEngine {
       _kalmanFilters[i] = RssiKalmanFilter();
       _sampleBuffers[i] = [];
       _calibratedA[i] = ShapnestProtocol.defaultRefRssi1m;
+      _wbCalibratedA[i] = ShapnestProtocol.defaultWbRefRssi1m;
     }
   }
 
@@ -80,14 +79,25 @@ class DistanceEngine {
       if (savedA != null) {
         _calibratedA[i] = savedA;
       }
+      final savedWbA = prefs.getInt('shapnest_cal_wb_a_node_$i');
+      if (savedWbA != null) {
+        _wbCalibratedA[i] = savedWbA;
+      }
     }
   }
 
-  /// Save calibration for a specific node
+  /// Save calibration for a specific node (Phone)
   Future<void> saveCalibration(int nodeId, int referenceRssi1m) async {
     _calibratedA[nodeId] = referenceRssi1m;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('shapnest_cal_a_node_$nodeId', referenceRssi1m);
+  }
+
+  /// Save calibration for a specific node (Wristband)
+  Future<void> saveWbCalibration(int nodeId, int referenceRssi1m) async {
+    _wbCalibratedA[nodeId] = referenceRssi1m;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('shapnest_cal_wb_a_node_$nodeId', referenceRssi1m);
   }
 
   /// Save global path loss exponent
@@ -104,8 +114,19 @@ class DistanceEngine {
     await prefs.remove('shapnest_cal_a_node_$nodeId');
   }
 
+  /// Reset wristband calibration back to hardware defaults
+  Future<void> resetWbCalibration(int nodeId) async {
+    _wbCalibratedA[nodeId] = ShapnestProtocol.defaultWbRefRssi1m;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('shapnest_cal_wb_a_node_$nodeId');
+  }
+
   int getCalibratedA(int nodeId) {
     return _calibratedA[nodeId] ?? ShapnestProtocol.defaultRefRssi1m;
+  }
+
+  int getWbCalibratedA(int nodeId) {
+    return _wbCalibratedA[nodeId] ?? ShapnestProtocol.defaultWbRefRssi1m;
   }
 
   RssiKalmanFilter? getFilter(int nodeId) => _kalmanFilters[nodeId];
@@ -159,12 +180,17 @@ class DistanceEngine {
     final filteredRssiInt = filteredRssiDouble.round();
     final motionState = kalman.motionState;
 
-    // 4. Log-Distance Path Loss Model
-    // d = 10 ^ ((A - RSSI) / (10 * n))
+    // 4. Log-Distance Path Loss Model (Continuous Dual-Zone Transition)
     final refA = (customA ?? _calibratedA[nodeId] ?? ShapnestProtocol.defaultRefRssi1m).toDouble();
     final expN = customN ?? globalPathLossN;
 
-    final exponent = (refA - filteredRssiDouble) / (10.0 * expN);
+    // Near-field (<1m, RSSI > refA) uses lower attenuation (n ~ 1.8) since direct LOS dominates;
+    // Far-field (>=1m, RSSI <= refA) uses indoor clutter exponent (n ~ 2.2 - 2.4).
+    final effectiveN = filteredRssiDouble > refA
+        ? (expN * 0.85).clamp(1.6, 2.0)
+        : expN;
+
+    final exponent = (refA - filteredRssiDouble) / (10.0 * effectiveN);
     double calculatedDistance = pow(10.0, exponent).toDouble();
 
     // 5. Asymmetric Velocity Limiting
@@ -262,12 +288,13 @@ class DistanceResult {
   int get distanceCm => (distanceMeters * 100).round();
 
   /// Proximity Safety Zone Classification
+  /// - Below 30 cm: Dangerous Zone (Red)
+  /// - 30 cm to 67 cm: Yellow Zone (Yellow/Warning)
+  /// - Further than 67 cm: Safe Zone (Green)
   ProximityZone get zone {
-    if (distanceMeters <= 0.30) {
-      return ProximityZone.criticalDanger;
-    } else if (distanceMeters <= 1.00) {
+    if (distanceMeters < 0.30) {
       return ProximityZone.danger;
-    } else if (distanceMeters <= 2.00) {
+    } else if (distanceMeters <= 0.67) {
       return ProximityZone.warning;
     } else {
       return ProximityZone.safe;

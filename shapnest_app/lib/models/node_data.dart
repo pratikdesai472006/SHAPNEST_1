@@ -25,7 +25,10 @@ class NodeData {
   NodeState wbState;
 
   // Calibration parameters
-  int calibratedA; // Reference RSSI @ 1m (in dBm)
+  int directCalibratedA; // Reference RSSI @ 1m for Phone Link (in dBm)
+  int wbCalibratedA; // Reference RSSI @ 1m for Wristband Link (in dBm)
+  int get calibratedA => directCalibratedA;
+  set calibratedA(int val) => directCalibratedA = val;
   double pathLossExpN; // Environmental factor n
   bool isUserCalibrated;
 
@@ -39,7 +42,9 @@ class NodeData {
     required this.icon,
     required this.primaryColor,
     required this.dangerDistanceM,
-    this.calibratedA = ShapnestProtocol.defaultRefRssi1m,
+    int? directCalibratedA,
+    int? wbCalibratedA,
+    int? calibratedA,
     this.pathLossExpN = 2.2,
     this.isUserCalibrated = false,
     this.directDistanceM,
@@ -54,26 +59,30 @@ class NodeData {
     this.wbState = NodeState.offline,
     this.packetCount = 0,
     this.packetsPerSecond = 0.0,
-  });
+  })  : directCalibratedA = calibratedA ?? directCalibratedA ?? ShapnestProtocol.defaultRefRssi1m,
+        wbCalibratedA = wbCalibratedA ?? ShapnestProtocol.defaultWbRefRssi1m;
 
-  /// Check whether the node is currently in the danger zone
+  /// Check whether the node is currently in the dangerous zone (< 30 cm)
   bool isDanger(double? distanceM) {
     if (distanceM == null) return false;
-    return distanceM <= dangerDistanceM || distanceM <= 1.00;
+    return distanceM < 0.30;
+  }
+
+  /// Check whether the node is currently in the yellow warning zone (30 - 67 cm)
+  bool isWarning(double? distanceM) {
+    if (distanceM == null) return false;
+    return distanceM >= 0.30 && distanceM <= 0.67;
   }
 
   /// Classify distance into standard SHAPNEST Safety Zones:
-  /// - 0–30 cm: Critical Danger
-  /// - 30–100 cm: Danger
-  /// - 100–200 cm: Warning
-  /// - >200 cm: Safe
+  /// - Below 30 cm: Dangerous Zone (Red)
+  /// - 30 cm to 67 cm: Yellow Zone (Yellow/Warning)
+  /// - Further than 67 cm: Safe Zone (Green)
   ProximityZone? getZone(double? distanceM) {
     if (distanceM == null) return null;
-    if (distanceM <= 0.30) {
-      return ProximityZone.criticalDanger;
-    } else if (distanceM <= 1.00) {
+    if (distanceM < 0.30) {
       return ProximityZone.danger;
-    } else if (distanceM <= 2.00) {
+    } else if (distanceM <= 0.67) {
       return ProximityZone.warning;
     } else {
       return ProximityZone.safe;

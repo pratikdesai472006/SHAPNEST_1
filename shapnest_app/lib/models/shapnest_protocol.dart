@@ -42,6 +42,7 @@ class ShapnestProtocol {
   static const double distanceMinM = 0.15;
   static const double distanceMaxM = 8.00;
   static const int distanceOfflineCm = 0xFFFF;
+  static const int rssiOffline = -128;
 
   // Staleness timeouts
   static const Duration nodeActiveTimeout = Duration(milliseconds: 1400);

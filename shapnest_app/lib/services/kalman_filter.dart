@@ -16,21 +16,21 @@ class RssiKalmanFilter {
   double _p = 1.0; // Estimation error covariance
 
   // Stationary Tuning Parameters
-  static const double _qStationary = 0.005; // Minimal process noise when still
-  static const double _rStationary = 14.0;  // High measurement noise resistance
+  static const double _qStationary = 0.015; // Controlled process noise when still
+  static const double _rStationary = 10.0;  // High measurement resistance for sub-6cm stationary spread
 
   // Moving Tuning Parameters
-  static const double _qMoving = 0.35;      // Higher process noise during movement
-  static const double _rMoving = 1.50;      // Low measurement noise to follow motion
+  static const double _qMoving = 0.45;     // Higher process noise during movement
+  static const double _rMoving = 1.50;     // Low measurement noise to follow motion
 
   // Fast Attack (Approaching Danger) Parameters
-  static const double _qFastAttack = 0.80;  // Extreme process noise
-  static const double _rFastAttack = 0.60;  // Minimal measurement resistance
+  static const double _qFastAttack = 1.00; // Fast tracking process noise
+  static const double _rFastAttack = 0.50; // Minimal measurement resistance
 
   // Thresholds (dBm)
-  static const double _stationaryDeltaThresh = 2.0; // Typical Rayleigh indoor noise
-  static const double _movementDeltaThresh   = 3.0; // Meaningful step change
-  static const double _fastAttackDeltaThresh = 4.0; // Rapid approach (+dBm = closer)
+  static const double _stationaryDeltaThresh = 1.8; // Typical Rayleigh indoor noise
+  static const double _movementDeltaThresh   = 2.5; // Meaningful step change
+  static const double _fastAttackDeltaThresh = 3.5; // Rapid approach (+dBm = closer)
 
   bool _isInitialized = false;
   FilterMotionState _motionState = FilterMotionState.stationary;

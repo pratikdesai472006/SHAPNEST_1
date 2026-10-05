@@ -185,43 +185,79 @@ class _CalibrationSheetState extends State<CalibrationSheet> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Step 1: 1-Meter Reference RSSI (A)',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: (isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7))
-                                  .withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              'A = ${node.calibratedA} dBm',
-                              style: TextStyle(
-                                color: isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7),
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'monospace',
+                      Builder(
+                        builder: (context) {
+                          final isWristband = widget.bleService.trackingSource == TrackingSource.wristband;
+                          final currentA = isWristband ? node.wbCalibratedA : node.directCalibratedA;
+                          final targetLabel = isWristband ? 'Wristband' : 'Phone';
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Step 1: 1-Meter Reference RSSI (A)',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurface,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        tooltip: 'Nudge A -1 dBm (Increases distance)',
+                                        color: isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7),
+                                        onPressed: () => widget.bleService.nudgeCalibration(node.id, -1),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: (isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7))
+                                              .withValues(alpha: 0.15),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          'A = $currentA dBm',
+                                          style: TextStyle(
+                                            color: isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            fontFamily: 'monospace',
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      IconButton(
+                                        icon: const Icon(Icons.add_circle_outline, size: 20),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        tooltip: 'Nudge A +1 dBm (Decreases distance)',
+                                        color: isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7),
+                                        onPressed: () => widget.bleService.nudgeCalibration(node.id, 1),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Place your phone exactly 1.0 meter away from the node antenna with clear line of sight, then tap Start.',
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Place the $targetLabel exactly 1.0 meter away from the node antenna with clear line of sight. Tap Start to auto-record, or use [–] / [+] to nudge live.',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                       const SizedBox(height: 14),
 

@@ -102,8 +102,8 @@ class BleService extends ChangeNotifier {
       isBluetoothAvailable = false;
     }
 
-    // Start periodic watchdog timer for staleness & offline detection (1 Hz)
-    _stalenessTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    // Start periodic watchdog timer for staleness & offline detection (fast 250ms check)
+    _stalenessTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       _checkStaleness();
     });
 
@@ -119,7 +119,8 @@ class BleService extends ChangeNotifier {
 
     // Load saved calibration parameters into node models
     for (final node in nodes) {
-      node.calibratedA = distanceEngine.getCalibratedA(node.id);
+      node.directCalibratedA = distanceEngine.getCalibratedA(node.id);
+      node.wbCalibratedA = distanceEngine.getWbCalibratedA(node.id);
       node.pathLossExpN = distanceEngine.globalPathLossN;
     }
   }
@@ -226,11 +227,16 @@ class BleService extends ChangeNotifier {
         node.directLastSeen = now;
         node.directState = NodeState.active;
 
+        // Auto-adopt beacon advertised reference if not user calibrated
+        if (!node.isUserCalibrated && parsed.calibratedRssi1m > -85 && parsed.calibratedRssi1m < -25) {
+          node.directCalibratedA = parsed.calibratedRssi1m;
+        }
+
         // Feed to Distance Engine
         final distRes = distanceEngine.processRssi(
           nodeId: nodeId,
           rawRssi: rawRssi,
-          customA: node.calibratedA,
+          customA: node.directCalibratedA,
           customN: node.pathLossExpN,
         );
 
@@ -238,8 +244,11 @@ class BleService extends ChangeNotifier {
         node.directFilteredRssi = distRes.filteredRssi;
         node.directMotionState = distRes.motionState;
 
-        // Check if Calibration Wizard is actively recording this node
-        if (activeCalibration != null && activeCalibration!.nodeId == nodeId && !activeCalibration!.isCompleted) {
+        // Check if Calibration Wizard is actively recording this node in Phone Mode
+        if (activeCalibration != null &&
+            activeCalibration!.nodeId == nodeId &&
+            !activeCalibration!.isCompleted &&
+            trackingSource == TrackingSource.directPhone) {
           activeCalibration!.collectedRssi.add(rawRssi);
           if (activeCalibration!.collectedRssi.length >= activeCalibration!.targetSamples) {
             _finishCalibration();
@@ -260,9 +269,34 @@ class BleService extends ChangeNotifier {
 
           final node = nodes[nodeIndex];
           node.wbState = block.state;
-          node.wbDistanceM = block.distanceM;
           node.wbFilteredRssi = block.filteredRssi;
           node.wbLastSeen = now;
+
+          // Compute distance on mobile engine using calibrated wristband reference (default -82 dBm)
+          if (block.state == NodeState.active && block.filteredRssi != ShapnestProtocol.rssiOffline) {
+            final distRes = distanceEngine.processRssi(
+              nodeId: block.nodeId,
+              rawRssi: block.filteredRssi,
+              customA: node.wbCalibratedA,
+              customN: node.pathLossExpN,
+            );
+            node.wbDistanceM = distRes.distanceMeters;
+          } else {
+            node.wbDistanceM = block.distanceM;
+          }
+
+          // Check if Calibration Wizard is actively recording this node in Wristband Mode
+          if (activeCalibration != null &&
+              activeCalibration!.nodeId == block.nodeId &&
+              !activeCalibration!.isCompleted &&
+              trackingSource == TrackingSource.wristband &&
+              block.state == NodeState.active &&
+              block.filteredRssi != ShapnestProtocol.rssiOffline) {
+            activeCalibration!.collectedRssi.add(block.filteredRssi);
+            if (activeCalibration!.collectedRssi.length >= activeCalibration!.targetSamples) {
+              _finishCalibration();
+            }
+          }
         }
 
         if (wasOffline || parsed.sequence % 4 == 0) {
@@ -317,11 +351,12 @@ class BleService extends ChangeNotifier {
   }
 
   // ==========================================================================
-  // CALIBRATION WIZARD
+  // CALIBRATION WIZARD & NUDGE CONTROLS
   // ==========================================================================
   void startCalibration(int nodeId) {
     activeCalibration = CalibrationState(nodeId: nodeId, targetSamples: 35);
-    _addLog('# [CALIBRATION] Started 1-meter calibration wizard for Node $nodeId. Keep phone exactly 1m away.');
+    final targetDevice = trackingSource == TrackingSource.wristband ? 'child wristband' : 'phone';
+    _addLog('# [CALIBRATION] Started 1-meter calibration wizard for Node $nodeId. Keep $targetDevice exactly 1m away.');
     notifyListeners();
   }
 
@@ -350,26 +385,66 @@ class BleService extends ChangeNotifier {
     activeCalibration!.finalCalibratedA = calibratedA;
     activeCalibration!.isCompleted = true;
 
-    // Save into distance engine & node data
-    await distanceEngine.saveCalibration(nodeId, calibratedA);
     final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
-    if (nodeIndex != -1) {
-      nodes[nodeIndex].calibratedA = calibratedA;
-      nodes[nodeIndex].isUserCalibrated = true;
+
+    if (trackingSource == TrackingSource.wristband) {
+      await distanceEngine.saveWbCalibration(nodeId, calibratedA);
+      if (nodeIndex != -1) {
+        nodes[nodeIndex].wbCalibratedA = calibratedA;
+        nodes[nodeIndex].isUserCalibrated = true;
+      }
+      _addLog('# [CALIBRATION] Node $nodeId Wristband Calibrated! New 1m RSSI (A): $calibratedA dBm.');
+    } else {
+      await distanceEngine.saveCalibration(nodeId, calibratedA);
+      if (nodeIndex != -1) {
+        nodes[nodeIndex].directCalibratedA = calibratedA;
+        nodes[nodeIndex].isUserCalibrated = true;
+      }
+      _addLog('# [CALIBRATION] Node $nodeId Phone Calibrated! New 1m RSSI (A): $calibratedA dBm.');
     }
 
-    _addLog('# [CALIBRATION] Node $nodeId Calibrated! New 1m RSSI (A): $calibratedA dBm.');
+    notifyListeners();
+  }
+
+  /// Nudge reference RSSI by +1 or -1 dBm for instantaneous real-world fine-tuning
+  Future<void> nudgeCalibration(int nodeId, int deltaDbm) async {
+    final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
+    if (nodeIndex == -1) return;
+
+    final node = nodes[nodeIndex];
+    if (trackingSource == TrackingSource.wristband) {
+      final newA = (node.wbCalibratedA + deltaDbm).clamp(-95, -30);
+      node.wbCalibratedA = newA;
+      node.isUserCalibrated = true;
+      await distanceEngine.saveWbCalibration(nodeId, newA);
+      _addLog('# [CALIBRATION] Node $nodeId Wristband 1m A nudged to: $newA dBm');
+    } else {
+      final newA = (node.directCalibratedA + deltaDbm).clamp(-95, -30);
+      node.directCalibratedA = newA;
+      node.isUserCalibrated = true;
+      await distanceEngine.saveCalibration(nodeId, newA);
+      _addLog('# [CALIBRATION] Node $nodeId Phone 1m A nudged to: $newA dBm');
+    }
     notifyListeners();
   }
 
   Future<void> resetNodeCalibration(int nodeId) async {
-    await distanceEngine.resetCalibration(nodeId);
     final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
-    if (nodeIndex != -1) {
-      nodes[nodeIndex].calibratedA = ShapnestProtocol.defaultRefRssi1m;
-      nodes[nodeIndex].isUserCalibrated = false;
+    if (trackingSource == TrackingSource.wristband) {
+      await distanceEngine.resetWbCalibration(nodeId);
+      if (nodeIndex != -1) {
+        nodes[nodeIndex].wbCalibratedA = ShapnestProtocol.defaultWbRefRssi1m;
+        nodes[nodeIndex].isUserCalibrated = false;
+      }
+      _addLog('# [CALIBRATION] Node $nodeId Wristband calibration reset to default (${ShapnestProtocol.defaultWbRefRssi1m} dBm).');
+    } else {
+      await distanceEngine.resetCalibration(nodeId);
+      if (nodeIndex != -1) {
+        nodes[nodeIndex].directCalibratedA = ShapnestProtocol.defaultRefRssi1m;
+        nodes[nodeIndex].isUserCalibrated = false;
+      }
+      _addLog('# [CALIBRATION] Node $nodeId Phone calibration reset to default (${ShapnestProtocol.defaultRefRssi1m} dBm).');
     }
-    _addLog('# [CALIBRATION] Node $nodeId calibration reset to default (-59 dBm).');
     notifyListeners();
   }
 
