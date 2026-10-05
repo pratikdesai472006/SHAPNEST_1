@@ -195,71 +195,50 @@ void setup() {
     reset_node_trackers();
     initialize_ble_subsystem();
 
-    blink_led(WRISTBAND_ID, 100);
-    Serial.println("# [LOG] Wristband Engine ONLINE — Starting Cooperative Loop.");
-}
+    assemble_uplink_payload();
+    pAdvertising->start();
 
-// ============================================================================
-// MAIN LOOP: COOPERATIVE TIME-SLICED SCHEDULER (1 Hz Master Cycle)
-// ============================================================================
-void loop() {
-    uint32_t cycleStart = millis();
-
-    // ------------------------------------------------------------------------
-    // RESET WINDOW-ISOLATED SAMPLE BUFFERS
-    // Eliminates cross-cycle sample pollution: each scan window is purely fresh
-    // ------------------------------------------------------------------------
-    portENTER_CRITICAL(&filterMux);
-    for (uint8_t i = 0; i < SHAPNEST_MAX_NODES; i++) {
-        nodeTrackers[i].windowCount = 0;
-    }
-    portEXIT_CRITICAL(&filterMux);
-
-    // ------------------------------------------------------------------------
-    // WINDOW 1: DEDICATED PASSIVE SCANNING (900 ms)
-    // 100% of the 2.4 GHz radio is dedicated to capturing Node advertisements.
-    // ------------------------------------------------------------------------
 #if defined(NIMBLE_CPP_VERSION_MAJOR) && (NIMBLE_CPP_VERSION_MAJOR >= 2)
     pScan->start(0, false, true);
 #else
     pScan->start(0, scanCompleteCB, false);
 #endif
 
-    while (millis() - cycleStart < SHAPNEST_WRISTBAND_SCAN_MS) {
-        delay(10); // Yield to FreeRTOS to allow BLE callback packet processing
-    }
+    blink_led(WRISTBAND_ID, 100);
+    Serial.println("# [LOG] Wristband Engine ONLINE — Continuous Scan & Direct BLE Uplink.");
+}
 
-    // Stop scanning cleanly; halts RX synthesizer and clears controller state
-    pScan->stop();
-
-    // ------------------------------------------------------------------------
-    // WINDOW 2: SIGNAL CONDITIONING & DISTANCE CALCULATION (< 5 ms)
-    // ------------------------------------------------------------------------
+// ============================================================================
+// MAIN LOOP: CONTINUOUS PROCESSING CYCLE (2 Hz Update Rate)
+// ============================================================================
+void loop() {
     uint32_t now = millis();
+
+    // 1. Compute multi-stage filtered distance for all nodes
     process_signal_conditioning(now);
 
-    // ------------------------------------------------------------------------
-    // WINDOW 3: DEDICATED UPLINK TRANSMISSION BURST (90 ms)
-    // Packs 31-byte frame and transmits 3 rapid pulses to Central Hub.
-    // ------------------------------------------------------------------------
+    // 2. Assemble fresh telemetry payload and update advertising packet
     assemble_uplink_payload();
-    transmit_uplink_burst();
 
-    // ------------------------------------------------------------------------
-    // DIAGNOSTIC LOGGING (Every 5 seconds)
-    // ------------------------------------------------------------------------
-    if (now - lastDiagnosticLogTime >= 5000) {
+    // 3. Reset window counters for fresh sample collection
+    portENTER_CRITICAL(&filterMux);
+    for (uint8_t i = 0; i < SHAPNEST_MAX_NODES; i++) {
+        nodeTrackers[i].windowCount = 0;
+    }
+    portEXIT_CRITICAL(&filterMux);
+
+    // 4. Ensure advertising remains active
+    if (!pAdvertising->isAdvertising()) {
+        pAdvertising->start();
+    }
+
+    // 5. Diagnostic Logging (Every 3 seconds)
+    if (now - lastDiagnosticLogTime >= 3000) {
         lastDiagnosticLogTime = now;
         print_diagnostic_heartbeat(now);
     }
 
-    // ------------------------------------------------------------------------
-    // SETTLE & COMPENSATE TO MAINTAIN EXACT 1000 ms MASTER CYCLE
-    // ------------------------------------------------------------------------
-    uint32_t elapsed = millis() - cycleStart;
-    if (elapsed < SHAPNEST_WRISTBAND_CYCLE_MS) {
-        delay(SHAPNEST_WRISTBAND_CYCLE_MS - elapsed);
-    }
+    delay(500); // 2 Hz telemetry refresh
 }
 
 // ============================================================================
@@ -294,6 +273,11 @@ static void initialize_ble_subsystem() {
     // Fast 25 ms advertising interval (40 * 0.625 ms = 25 ms)
     pAdvertising->setMinInterval(40);
     pAdvertising->setMaxInterval(40);
+
+    // 3. Scan Response Data (Broadcasts full device name "SHAPNEST_WB1")
+    NimBLEAdvertisementData scanRespData;
+    scanRespData.setName("SHAPNEST_WB1");
+    pAdvertising->setScanResponseData(scanRespData);
 }
 
 // ============================================================================
@@ -423,19 +407,11 @@ static void assemble_uplink_payload() {
         uplinkPayload.nodes[i].filtered_rssi= n->filteredRssi;
     }
 
-    // Load packed 18-byte payload into standard BLE advertisement data structure
+    // Load packed 18-byte payload into standard BLE advertisement data structure (Total = 28 bytes < 31 byte limit)
     advData.setFlags(0x06); // LE General Discoverable | BR/EDR Not Supported
     advData.setManufacturerData(std::string((const char*)&uplinkPayload, sizeof(uplinkPayload)));
+    advData.setShortName("WB1");
     pAdvertising->setAdvertisementData(advData);
-}
-
-// ============================================================================
-// TRANSMIT 3-PULSE UPLINK BURST (90 ms Window)
-// ============================================================================
-static void transmit_uplink_burst() {
-    pAdvertising->start();
-    delay(SHAPNEST_WRISTBAND_UPLINK_BURST_MS);
-    pAdvertising->stop();
 }
 
 // ============================================================================

@@ -249,6 +249,7 @@ class BleService extends ChangeNotifier {
 
       // Case 2: Child Wristband Uplink Telemetry (SHAPNEST_WB1)
       else if (parsed is ParsedWristbandTelemetry) {
+        final wasOffline = !isWristbandOnline;
         isWristbandOnline = true;
         wristbandSequence = parsed.sequence;
         lastWristbandSeen = now;
@@ -262,6 +263,13 @@ class BleService extends ChangeNotifier {
           node.wbDistanceM = block.distanceM;
           node.wbFilteredRssi = block.filteredRssi;
           node.wbLastSeen = now;
+        }
+
+        if (wasOffline || parsed.sequence % 4 == 0) {
+          final d1 = nodes[0].wbDistanceM != null ? '${nodes[0].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[0].wbState == NodeState.offline ? 'OFF' : '——');
+          final d2 = nodes[1].wbDistanceM != null ? '${nodes[1].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[1].wbState == NodeState.offline ? 'OFF' : '——');
+          final d3 = nodes[2].wbDistanceM != null ? '${nodes[2].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[2].wbState == NodeState.offline ? 'OFF' : '——');
+          _addLog('# [WRISTBAND] WB#${parsed.wristbandId} (Seq #${parsed.sequence}) ⟷ Fan: $d1 | Iron: $d2 | Door: $d3');
         }
       }
     }

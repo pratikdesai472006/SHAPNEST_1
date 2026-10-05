@@ -69,9 +69,13 @@ class ProtocolParser {
           if (parsed != null) return parsed;
         }
       }
+
+      // Case 3: Direct structural parse (handles OEM stacks that remap company ID)
+      final directParsed = _parsePayloadBytes(rawBytes, devName);
+      if (directParsed != null) return directParsed;
     }
 
-    // Fallback: check device name pattern (e.g. "SHAPNEST_N1", "SHAPNEST_WB1")
+    // Fallback: check device name pattern (e.g. "SHAPNEST_N1", "SHAPNEST_WB1", "WB1")
     if (devName.startsWith('SHAPNEST_N')) {
       final idChar = devName.replaceAll('SHAPNEST_N', '').trim();
       final id = int.tryParse(idChar);
@@ -85,11 +89,25 @@ class ProtocolParser {
       }
     }
 
+    // Fallback for Wristband by device name
+    if (devName.contains('SHAPNEST_WB') || devName.contains('WB1')) {
+      for (final rawBytes in mfrDataMap.values) {
+        final parsed = _parsePayloadBytes(rawBytes, devName);
+        if (parsed is ParsedWristbandTelemetry) return parsed;
+      }
+    }
+
     return null;
   }
 
   static Object? _parsePayloadBytes(List<int> bytes, String devName) {
     if (bytes.isEmpty) return null;
+
+    // Auto-strip 2-byte company ID if present in payload (0x534E or 0x4E53)
+    if (bytes.length >= 7 &&
+        ((bytes[0] == 0x4E && bytes[1] == 0x53) || (bytes[0] == 0x53 && bytes[1] == 0x4E))) {
+      bytes = bytes.sublist(2);
+    }
 
     final frameType = bytes[0];
 
