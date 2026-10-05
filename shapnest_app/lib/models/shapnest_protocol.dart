@@ -34,7 +34,8 @@ class ShapnestProtocol {
 
   // Defaults
   static const int defaultTxPowerDbm = 9;
-  static const int defaultRefRssi1m = -59;
+  static const int defaultRefRssi1m = -48; // Phone receiver @ 1m (+9 dBm beacon)
+  static const int defaultWbRefRssi1m = -82; // Wristband receiver @ 1m (+9 dBm beacon)
   static const int defaultPathLossExpX10 = 22; // n = 2.2
 
   // Distance bounds
