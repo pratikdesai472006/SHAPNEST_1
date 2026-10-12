@@ -87,13 +87,23 @@ typedef enum {
     ((shapnest_node_state_t)(((packed_byte) >> 4) & 0x03))
 
 /* -------------------------------------------------------------------------- */
+/* SENSOR STATUS DEFINITIONS (Door, etc.)                                     */
+/* -------------------------------------------------------------------------- */
+#define SHAPNEST_DOOR_CLOSED                 0x00    /* Magnet present, reed switch closed to GND */
+#define SHAPNEST_DOOR_OPEN                   0x01    /* Magnet away, reed switch open (pulled HIGH) */
+#define SHAPNEST_IRON_TEMP_HOT_THRESH        50      /* >= 50°C is considered HOT / Burn Hazard */
+#define SHAPNEST_IRON_TEMP_WARM_THRESH       40      /* >= 40°C is considered Warm */
+#define SHAPNEST_IRON_TEMP_DEFAULT_AMB       28      /* Default ambient room temperature (28°C) */
+#define SHAPNEST_NODE_PAYLOAD_MIN_SIZE       7       /* Legacy 7 bytes or 8 bytes with sensor */
+
+/* -------------------------------------------------------------------------- */
 /* PACKED BINARY STRUCTURES                                                   */
 /* -------------------------------------------------------------------------- */
 #pragma pack(push, 1)
 
 /**
  * 1. Node Manufacturer Specific Data Payload (Inside BLE AD Type 0xFF)
- * Total Size: Exactly 7 Bytes.
+ * Total Size: Exactly 8 Bytes (Includes 1 Byte sensor_state).
  */
 typedef struct {
     uint16_t company_id;           /* 0x534E ('S', 'N') */
@@ -102,11 +112,12 @@ typedef struct {
     int8_t   calibrated_rssi_1m;   /* e.g. -59 dBm */
     uint8_t  path_loss_exp_x10;    /* e.g. 22 representing n = 2.2 */
     uint8_t  sequence;             /* Rolling packet counter (0..255) */
+    uint8_t  sensor_state;         /* Sensor status (0x00=CLOSED, 0x01=OPEN) */
 } shapnest_node_payload_t;
 
 /**
  * Complete Node BLE Advertisement Packet (Standard 31-Byte PDU)
- * Total Size: Exactly 12 Bytes (19 Bytes unused headroom).
+ * Total Size: Exactly 13 Bytes (18 Bytes unused headroom).
  */
 typedef struct {
     /* BLE Flags AD Structure (3 Bytes) */
@@ -114,10 +125,10 @@ typedef struct {
     uint8_t  flags_type;           /* 0x01 (Flags) */
     uint8_t  flags_data;           /* 0x06 (LE General Discoverable, BR/EDR Not Supported) */
 
-    /* Manufacturer Specific AD Structure (9 Bytes) */
-    uint8_t  mfr_length;           /* 0x08 (8 bytes follow: type + 7 bytes payload) */
+    /* Manufacturer Specific AD Structure (10 Bytes) */
+    uint8_t  mfr_length;           /* 0x09 (9 bytes follow: type + 8 bytes payload) */
     uint8_t  mfr_type;             /* 0xFF (Manufacturer Specific Data) */
-    shapnest_node_payload_t payload; /* 7 Bytes */
+    shapnest_node_payload_t payload; /* 8 Bytes */
 } shapnest_node_beacon_packet_t;
 
 /**
@@ -165,10 +176,10 @@ typedef struct {
 /* COMPILE-TIME SIZE VERIFICATIONS                                            */
 /* -------------------------------------------------------------------------- */
 #if defined(__cplusplus) && __cplusplus >= 201103L
-static_assert(sizeof(shapnest_node_payload_t) == 7, 
-              "shapnest_node_payload_t must be exactly 7 bytes");
-static_assert(sizeof(shapnest_node_beacon_packet_t) == 12, 
-              "shapnest_node_beacon_packet_t must be exactly 12 bytes");
+static_assert(sizeof(shapnest_node_payload_t) == 8, 
+              "shapnest_node_payload_t must be exactly 8 bytes");
+static_assert(sizeof(shapnest_node_beacon_packet_t) == 13, 
+              "shapnest_node_beacon_packet_t must be exactly 13 bytes");
 static_assert(sizeof(shapnest_node_telemetry_block_t) == 4, 
               "shapnest_node_telemetry_block_t must be exactly 4 bytes");
 static_assert(sizeof(shapnest_wristband_payload_t) == 18, 

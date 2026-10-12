@@ -119,7 +119,7 @@ class RadarPainter extends CustomPainter {
       canvas.drawCircle(center, r, ringPaint);
 
       // Ring Distance Text Label
-      final label = unit == 'm' ? '${dist.toStringAsFixed(1)}m' : '${(dist * 100).toInt()}cm';
+      final label = unit == 'm' ? '${dist.toStringAsFixed(1)}m' : '${(dist * 100).round()}cm';
       final textSpan = TextSpan(
         text: label,
         style: TextStyle(
@@ -209,7 +209,9 @@ class RadarPainter extends CustomPainter {
         center.dy + r * sin(angle),
       );
 
-      final isDanger = isOnline && node.isDanger(distM);
+      final isDanger = (trackingSource == TrackingSource.wristband) &&
+          isOnline &&
+          node.isDanger(distM);
       final markerColor = isDanger
           ? const Color(0xFFFF1744)
           : (isOnline ? node.primaryColor : const Color(0xFF94A3B8));
@@ -230,7 +232,7 @@ class RadarPainter extends CustomPainter {
 
       // Node Label & Distance Tag
       final distStr = isOnline
-          ? (unit == 'm' ? '${distM.toStringAsFixed(2)}m' : '${(distM * 100).toInt()}cm')
+          ? (unit == 'm' ? '${distM.toStringAsFixed(2)}m' : '${(distM * 100).round()}cm')
           : 'OFFLINE';
 
       final tagSpan = TextSpan(

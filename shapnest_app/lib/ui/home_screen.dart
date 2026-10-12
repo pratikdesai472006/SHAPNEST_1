@@ -141,8 +141,9 @@ class _HomeScreenState extends State<HomeScreen> {
             backgroundColor: theme.appBarTheme.backgroundColor,
             foregroundColor: theme.appBarTheme.foregroundColor,
             elevation: theme.appBarTheme.elevation,
-            titleSpacing: 16,
+            titleSpacing: 12,
             title: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
                   padding: const EdgeInsets.all(6),
@@ -152,44 +153,39 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.radar, color: Colors.black, size: 20),
+                  child: const Icon(Icons.radar, color: Colors.black, size: 18),
                 ),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SHAPNEST',
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurface,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.2,
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'SHAPNEST',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.1,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Direct BLE Precision Tracker',
-                      style: TextStyle(
-                        color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
+                      Text(
+                        'Precision Tracker',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
             actions: [
-              // Theme Selector Toggle
-              IconButton(
-                icon: Icon(
-                  widget.themeService.themeIcon,
-                  color: isDark ? const Color(0xFFFFD54F) : const Color(0xFF475569),
-                ),
-                tooltip: 'Theme: ${widget.themeService.themeName}',
-                onPressed: _showThemeSelector,
-              ),
-
               // Dynamic Unit Toggle ('m' <-> 'cm')
               Container(
                 margin: const EdgeInsets.symmetric(vertical: 10),
@@ -210,18 +206,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(width: 4),
 
-              // Simulation / Demo Mode Toggle
-              IconButton(
-                icon: Icon(
-                  ble.isSimulating ? Icons.smart_toy : Icons.smart_toy_outlined,
-                  color: ble.isSimulating
-                      ? const Color(0xFFA855F7)
-                      : (isDark ? Colors.white70 : const Color(0xFF64748B)),
-                ),
-                tooltip: ble.isSimulating ? 'Stop Demo Simulation' : 'Start Demo Simulation',
-                onPressed: () => ble.toggleSimulation(),
-              ),
-
               // Calibration Modal Button
               IconButton(
                 icon: Icon(
@@ -232,16 +216,64 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPressed: () => _openCalibration(1),
               ),
 
-              // Diagnostic Log Modal Button
-              IconButton(
+              // Overflow Menu (Theme, Simulation, Diagnostic Logs)
+              PopupMenuButton<String>(
                 icon: Icon(
-                  Icons.terminal,
+                  Icons.more_vert,
                   color: isDark ? Colors.white70 : const Color(0xFF64748B),
                 ),
-                tooltip: 'Diagnostic Logs',
-                onPressed: _openDiagnostics,
+                tooltip: 'More Options',
+                onSelected: (value) {
+                  switch (value) {
+                    case 'theme':
+                      _showThemeSelector();
+                      break;
+                    case 'sim':
+                      ble.toggleSimulation();
+                      break;
+                    case 'logs':
+                      _openDiagnostics();
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'theme',
+                    child: Row(
+                      children: [
+                        Icon(widget.themeService.themeIcon, size: 18),
+                        const SizedBox(width: 10),
+                        Text('Theme: ${widget.themeService.themeName}'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'sim',
+                    child: Row(
+                      children: [
+                        Icon(
+                          ble.isSimulating ? Icons.smart_toy : Icons.smart_toy_outlined,
+                          color: ble.isSimulating ? const Color(0xFFA855F7) : null,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(ble.isSimulating ? 'Stop Demo Mode' : 'Start Demo Mode'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'logs',
+                    child: Row(
+                      children: [
+                        Icon(Icons.terminal, size: 18),
+                        const SizedBox(width: 10),
+                        Text('Diagnostic Logs'),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
             ],
           ),
           body: CustomScrollView(

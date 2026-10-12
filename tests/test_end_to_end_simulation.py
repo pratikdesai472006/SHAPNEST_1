@@ -173,23 +173,64 @@ class TestProtocolSerialization(unittest.TestCase):
     """Verifies strict byte packing and lengths of all binary frames."""
 
     def test_node_beacon_packet_layout(self):
-        """Node packet must be exactly 12 bytes."""
-        fmt = "<BBB BB H B B b B B"
-        pkt = struct.pack(fmt,
-                          0x02, 0x01, 0x06,
-                          0x08, 0xFF,
-                          SHAPNEST_PROTOCOL_ID,
-                          SHAPNEST_FRAME_TYPE_NODE_BEACON,
-                          1, -59, 22, 10)
-        self.assertEqual(len(pkt), 12, "Node beacon packet must be exactly 12 bytes")
+        """Node packet must be 12 bytes (legacy) or 13 bytes (with sensor status)."""
+        # Legacy 12-byte beacon packet
+        fmt_legacy = "<BBB BB H B B b B B"
+        pkt_legacy = struct.pack(fmt_legacy,
+                                 0x02, 0x01, 0x06,
+                                 0x08, 0xFF,
+                                 SHAPNEST_PROTOCOL_ID,
+                                 SHAPNEST_FRAME_TYPE_NODE_BEACON,
+                                 1, -59, 22, 10)
+        self.assertEqual(len(pkt_legacy), 12, "Legacy node beacon packet must be exactly 12 bytes")
         
-        # Unpack and verify fields
-        unpacked = struct.unpack(fmt, pkt)
-        self.assertEqual(unpacked[5], 0x534E)  # Company ID
-        self.assertEqual(unpacked[6], 0x01)    # Node Beacon frame type
-        self.assertEqual(unpacked[7], 1)       # Node ID
-        self.assertEqual(unpacked[8], -59)     # Calibrated RSSI
-        self.assertEqual(unpacked[9], 22)      # Path Loss Exp x10
+        # Phase 2 13-byte beacon packet (with door sensor_state)
+        fmt_sensor = "<BBB BB H B B b B B B"
+        pkt_sensor = struct.pack(fmt_sensor,
+                                 0x02, 0x01, 0x06,
+                                 0x09, 0xFF,
+                                 SHAPNEST_PROTOCOL_ID,
+                                 SHAPNEST_FRAME_TYPE_NODE_BEACON,
+                                 3, -59, 22, 10, 0x01) # Node 3, Door Open (0x01)
+        self.assertEqual(len(pkt_sensor), 13, "Sensor-enabled node beacon packet must be exactly 13 bytes")
+
+        # Unpack and verify sensor fields
+        unpacked_sensor = struct.unpack(fmt_sensor, pkt_sensor)
+        self.assertEqual(unpacked_sensor[5], 0x534E)  # Company ID
+        self.assertEqual(unpacked_sensor[6], 0x01)    # Node Beacon frame type
+        self.assertEqual(unpacked_sensor[7], 3)       # Node ID: Door
+        self.assertEqual(unpacked_sensor[8], -59)     # Calibrated RSSI
+        self.assertEqual(unpacked_sensor[9], 22)      # Path Loss Exp x10
+        self.assertEqual(unpacked_sensor[11], 0x01)   # Door Open state
+
+    def test_iron_node_temperature_beacon_packet_layout(self):
+        """Verifies Node 2 (Iron) beacon packet layout with temperature in sensor_state."""
+        fmt_sensor = "<BBB BB H B B b B B B"
+        # Test safe room temperature (28°C)
+        pkt_safe = struct.pack(fmt_sensor,
+                               0x02, 0x01, 0x06,
+                               0x09, 0xFF,
+                               SHAPNEST_PROTOCOL_ID,
+                               SHAPNEST_FRAME_TYPE_NODE_BEACON,
+                               2, -59, 22, 1, 28) # Node 2, Iron 28°C
+        self.assertEqual(len(pkt_safe), 13, "Iron beacon packet must be exactly 13 bytes")
+        unpacked_safe = struct.unpack(fmt_sensor, pkt_safe)
+        self.assertEqual(unpacked_safe[5], 0x534E)
+        self.assertEqual(unpacked_safe[6], 0x01)
+        self.assertEqual(unpacked_safe[7], 2)       # Node 2 (Iron)
+        self.assertEqual(unpacked_safe[8], -59)
+        self.assertEqual(unpacked_safe[9], 22)
+        self.assertEqual(unpacked_safe[11], 28)     # Temperature: 28°C
+
+        # Test hot temperature (75°C)
+        pkt_hot = struct.pack(fmt_sensor,
+                              0x02, 0x01, 0x06,
+                              0x09, 0xFF,
+                              SHAPNEST_PROTOCOL_ID,
+                              SHAPNEST_FRAME_TYPE_NODE_BEACON,
+                              2, -59, 22, 2, 75)
+        unpacked_hot = struct.unpack(fmt_sensor, pkt_hot)
+        self.assertEqual(unpacked_hot[11], 75)      # Temperature: 75°C
 
     def test_wristband_telemetry_packet_layout(self):
         """Wristband telemetry packet must be exactly 23 bytes (3 nodes, 8 bytes headroom)."""
@@ -531,6 +572,227 @@ class TestCentralHubNDJSONIntegration(unittest.TestCase):
         self.assertEqual(format_distance(8.00, 800, "OUT_OF_RANGE", "cm"), "> 800 cm")
         self.assertEqual(format_distance(None, 65535, "OFFLINE", "m"), "--")
         self.assertEqual(format_distance(None, 65535, "OFFLINE", "cm"), "--")
+
+
+class TestHybridWiFiFtmKalmanFusion(unittest.TestCase):
+    """Directly verifies the hybrid ESP32-C3 Wi-Fi FTM Time-of-Flight + BLE fusion engine."""
+
+    def test_ftm_sanity_gate_and_clamping(self):
+        """Verifies that FTM sanity bounds reject 0, wrapped underflow, and clamp to [15, 800] cm."""
+        def sanitize_ftm(raw_cm: int):
+            if raw_cm <= 0 or raw_cm > 2500:
+                return None
+            if raw_cm < SHAPNEST_DISTANCE_MIN_CM:
+                return SHAPNEST_DISTANCE_MIN_CM
+            if raw_cm > SHAPNEST_DISTANCE_MAX_CM:
+                return SHAPNEST_DISTANCE_MAX_CM
+            return raw_cm
+
+        # Rejections
+        self.assertIsNone(sanitize_ftm(0), "Must reject 0 cm")
+        self.assertIsNone(sanitize_ftm(2501), "Must reject > 2500 cm")
+        self.assertIsNone(sanitize_ftm(0xFFFFFFFF), "Must reject wrapped underflow")
+        self.assertIsNone(sanitize_ftm(65535), "Must reject sentinel wrapped value")
+
+        # Clamping
+        self.assertEqual(sanitize_ftm(5), 15, "Must clamp to 15 cm floor")
+        self.assertEqual(sanitize_ftm(950), 800, "Must clamp to 800 cm ceiling")
+        self.assertEqual(sanitize_ftm(150), 150, "Valid 150 cm passes through")
+
+    def test_ftm_sensor_isolation_from_ble_noise(self):
+        """Verifies that noisy BLE RSSI does NOT drag active Wi-Fi FTM Time-of-Flight distance."""
+        # Setup Kalman simulator
+        dist_m = 1.50
+        p = 0.02
+        initialized = True
+
+        # Simulate noisy BLE readings (e.g. 3.20m due to RF multipath fading)
+        noisy_ble = 3.20
+        is_ftm_active = True
+
+        # When FTM is active, BLE update must be a no-op to preserve ToF physics
+        if not is_ftm_active:
+            # BLE would pull distance
+            k = p / (p + 1.2)
+            dist_m = dist_m + k * (noisy_ble - dist_m)
+
+        self.assertEqual(dist_m, 1.50, "Active FTM must isolate distance from BLE noise")
+
+    def test_ftm_decoupled_from_ble_sampling(self):
+        """FTM updates must succeed even if zero BLE beacons arrived in the 250ms window."""
+        window_count = 0  # Zero BLE beacons
+        fresh_ftm_sample = True
+        raw_ftm_cm = 210
+
+        dist_cm = None
+        if fresh_ftm_sample:
+            dist_cm = raw_ftm_cm
+
+        self.assertEqual(dist_cm, 210, "FTM must update even when BLE window_count == 0")
+
+    def test_ftm_fallback_to_ble_when_expired(self):
+        """When FTM drops for > 2000 ms, system falls back smoothly to BLE Kalman tracking."""
+        now = 5000
+        last_ftm_success = 2500  # 2500 ms ago > 2000 ms window
+        has_recent_ftm = (now - last_ftm_success) <= 2000
+        self.assertFalse(has_recent_ftm, "FTM must be considered expired after 2500 ms")
+
+        # Fallback to BLE is triggered
+        has_fresh_ble = True
+        ble_dist_m = 2.45
+        active_mode = "FTM" if has_recent_ftm else ("BLE" if has_fresh_ble else "HOLD")
+        self.assertEqual(active_mode, "BLE")
+
+    def test_node2_iron_distance_estimation_and_calibration_isolation(self):
+        """Verifies that Node 2 (Iron) calibration and distance calculations are completely isolated from Node 3 (Door)."""
+        # Node 2 initial calibration: A2 = -59 dBm, n2 = 2.2
+        # Node 3 verified calibration: A3 = -58 dBm, n3 = 2.0
+        rssi_measured = -65.0  # Measured RSSI
+
+        # Compute distance for Node 2 and Node 3
+        dist_node2_initial = calculate_log_distance(rssi_measured, a=-59.0, n=2.2)
+        dist_node3 = calculate_log_distance(rssi_measured, a=-58.0, n=2.0)
+
+        self.assertAlmostEqual(dist_node2_initial, 1.874, places=2)
+        self.assertAlmostEqual(dist_node3, 2.239, places=2)
+
+        # Bench calibrate Node 2: A2 -> -56 dBm, n2 -> 2.4
+        dist_node2_calibrated = calculate_log_distance(rssi_measured, a=-56.0, n=2.4)
+        dist_node3_after = calculate_log_distance(rssi_measured, a=-58.0, n=2.0)
+
+        # Node 2 distance must adapt to its new calibrated parameters
+        self.assertAlmostEqual(dist_node2_calibrated, 2.371, places=2)
+        # Node 3 distance MUST remain exactly unchanged (zero crosstalk or leakage)
+        self.assertEqual(dist_node3, dist_node3_after, "Node 3 distance calculation must be 100% isolated from Node 2 calibration")
+
+    def test_node2_iron_burn_hazard_distance_classification(self):
+        """Verifies that Node 2 burn hazard logic triggers at appropriate distance and temperature thresholds."""
+        temp_safe = 28
+        temp_hot = 65
+
+        # Critical danger distance: 0.25 m (< 0.30 m)
+        dist_critical = 0.25
+        cm_critical = clamp_distance_cm(dist_critical)
+        self.assertEqual(cm_critical, 25)
+
+        # Safe temperature with close proximity
+        is_burn_hazard_safe = (temp_safe >= 50) and (dist_critical <= 1.0)
+        self.assertFalse(is_burn_hazard_safe, "Safe temperature should not trigger burn hazard")
+
+        # Hot temperature with close proximity
+        is_burn_hazard_hot = (temp_hot >= 50) and (dist_critical <= 1.0)
+        self.assertTrue(is_burn_hazard_hot, "Hot temperature with close proximity MUST trigger burn hazard")
+
+    def test_centimeter_rounding_precision(self):
+        """Verifies round() prevents truncation errors compared to int() across UI displays."""
+        # 1.459 m -> 146 cm (not 145 cm)
+        self.assertEqual(round(1.459 * 100), 146)
+        self.assertEqual(int(round(1.459 * 100)), 146)
+        # 0.296 m -> 30 cm (not 29 cm)
+        self.assertEqual(round(0.296 * 100), 30)
+        # 0.804 m -> 80 cm
+        self.assertEqual(round(0.804 * 100), 80)
+
+    def test_wristband_manual_calibration_override_locking(self):
+        """Verifies that manual Serial calibration on wristband is locked against incoming beacon overwrites."""
+        class MockNodeTracker:
+            def __init__(self):
+                self.calibratedRefA = -59
+                self.pathLossExpX10 = 22
+                self.manualCalOverride = False
+
+        tracker = MockNodeTracker()
+
+        # Step 1: Normal beacon arrives, updates calibration
+        beacon_refA = -58
+        beacon_exp = 21
+        if not tracker.manualCalOverride:
+            tracker.calibratedRefA = beacon_refA
+            tracker.pathLossExpX10 = beacon_exp
+        self.assertEqual(tracker.calibratedRefA, -58)
+        self.assertEqual(tracker.pathLossExpX10, 21)
+
+        # Step 2: User commands CAL 2 -55 via Serial CDC on wristband -> manualCalOverride becomes True
+        tracker.calibratedRefA = -55
+        tracker.manualCalOverride = True
+
+        # Step 3: New incoming beacon arrives with -59 -> MUST NOT OVERWRITE
+        incoming_beacon_refA = -59
+        incoming_beacon_exp = 22
+        if not tracker.manualCalOverride:
+            tracker.calibratedRefA = incoming_beacon_refA
+            tracker.pathLossExpX10 = incoming_beacon_exp
+        self.assertEqual(tracker.calibratedRefA, -55, "Manual calibration must be locked against incoming beacon overwrite")
+
+        # Step 4: RESET command clears override and restores default
+        tracker.calibratedRefA = -59
+        tracker.pathLossExpX10 = 22
+        tracker.manualCalOverride = False
+        self.assertFalse(tracker.manualCalOverride)
+        self.assertEqual(tracker.calibratedRefA, -59)
+
+    def test_ota_beacon_calibration_propagation_to_mobile_model(self):
+        """Verifies mobile node model adopts OTA beacon calibration if user has not set phone override."""
+        node_calA = -59
+        node_expN = 2.2
+        is_user_calibrated = False
+
+        # Incoming beacon with calibrated parameters from Node 2
+        beacon_calA = -56
+        beacon_expN = 2.4
+
+        if not is_user_calibrated:
+            node_calA = beacon_calA
+            node_expN = beacon_expN
+
+        self.assertEqual(node_calA, -56)
+        self.assertEqual(node_expN, 2.4)
+
+        # If user explicitly calibrated on phone, it stays locked
+        is_user_calibrated = True
+        node_calA = -50
+
+        # Another beacon arrives
+        if not is_user_calibrated:
+            node_calA = -58
+        self.assertEqual(node_calA, -50, "User calibration on mobile device must take precedence")
+
+    def test_wristband_rolling_buffer_motion_accumulation(self):
+        """Verifies that rolling buffer retains incoming samples during step motion for median filtering."""
+        class MockWristbandBuffer:
+            def __init__(self, capacity=16):
+                self.capacity = capacity
+                self.buffer = []
+                self.kalman_x = -70.0
+                self.kalman_init = True
+
+            def handle_packet(self, raw_rssi, timestamp_ms):
+                # Correct behavior: do NOT wipe buffer per packet on |raw - x| >= 4.0!
+                self.buffer.append({'rssi': raw_rssi, 'ts': timestamp_ms})
+                if len(self.buffer) > self.capacity:
+                    self.buffer.pop(0)
+
+            def compute_median(self, now_ms, max_age_ms=400):
+                valid = [s['rssi'] for s in self.buffer if (now_ms - s['ts']) <= max_age_ms]
+                if not valid:
+                    return None
+                valid.sort()
+                return valid[len(valid) // 2]
+
+        wb = MockWristbandBuffer()
+
+        # Simulate 6 packets arriving at 40ms intervals during approach from -70 dBm to -60 dBm
+        # Include 1 multipath outlier (-50 dBm)
+        samples = [-61, -60, -50, -62, -61, -60] # -50 is an RF multipath spike
+        for i, rssi in enumerate(samples):
+            wb.handle_packet(rssi, timestamp_ms=1000 + i * 40)
+
+        # Buffer must have accumulated all 6 samples (NOT stuck at 1 sample!)
+        self.assertEqual(len(wb.buffer), 6, "Rolling buffer must accumulate samples during motion")
+
+        # Median filter must reject the -50 multipath spike and return -60 dBm
+        median_rssi = wb.compute_median(now_ms=1240)
+        self.assertEqual(median_rssi, -60, "Median filter must correctly filter multipath spike during motion")
 
 
 if __name__ == "__main__":

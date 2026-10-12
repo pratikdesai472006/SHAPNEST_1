@@ -49,12 +49,14 @@ class DistanceEngine {
 
   // Displayed distance memory for Hysteresis Dead-Band
   final Map<int, double> _displayedDistances = {};
+  final Map<int, double> _smoothDistances = {};
+  final Map<int, int> _deadbandBreachCounts = {};
 
-  // Velocity limiting
+  // Velocity limiting (unclamped for rapid physical relocation)
   final Map<int, double> _lastCalculatedDistances = {};
   final Map<int, DateTime> _lastCalculationTimes = {};
-  static const double _maxRetreatSpeedMps = 2.5; // Walking away
-  static const double _maxApproachSpeedMps = 3.5; // Fast step toward hazard
+  static const double _maxRetreatSpeedMps = 8.0; // Rapid physical separation
+  static const double _maxApproachSpeedMps = 8.0; // Rapid physical approach
 
   // Per-node calibrated 1m reference RSSI (A)
   final Map<int, int> _calibratedA = {};
@@ -139,9 +141,8 @@ class DistanceEngine {
     // 1. Maintain compact sliding window buffer for impulse rejection
     final buffer = _sampleBuffers.putIfAbsent(nodeId, () => []);
 
-    // Fast-Attack Priority: If signal jumps significantly stronger (approaching hazard),
-    // immediately clear stale far samples so the median filter never delays life-safety proximity detection!
-    if (kalman.isInitialized && (rawRssi - kalman.currentRssi) >= 3.5) {
+    // Fast-Attack / Step Change: Flush on meaningful step change (>= 3.8 dBm) so physical motion flushes stale samples
+    if (kalman.isInitialized && (rawRssi - kalman.currentRssi).abs() >= 3.8) {
       buffer.clear();
     }
 
@@ -172,7 +173,7 @@ class DistanceEngine {
     final lastTime = _lastCalculationTimes[nodeId];
     final lastDist = _lastCalculatedDistances[nodeId];
 
-    if (lastTime != null && lastDist != null && motionState != FilterMotionState.fastAttack) {
+    if (lastTime != null && lastDist != null && motionState == FilterMotionState.stationary) {
       final dtSec = now.difference(lastTime).inMilliseconds / 1000.0;
       if (dtSec > 0.05 && dtSec < 2.0) {
         final isApproaching = calculatedDistance < lastDist;
@@ -198,36 +199,50 @@ class DistanceEngine {
       isClamped = true;
     }
 
-    // 7. Small-Jitter Hysteresis Dead-Band
-    // Prevents microscopic numeric display flickering when the target is physically stationary,
-    // while allowing real movements to propagate instantly.
-    double displayedDist = _displayedDistances[nodeId] ?? calculatedDistance;
+    // 7. Ultra-Stable Hysteresis Dead-Band with Persistence & Smooth Motion Tracking
+    double lockedDist = _displayedDistances[nodeId] ?? calculatedDistance;
+    double smoothDist = _smoothDistances[nodeId] ?? lockedDist;
+    int breachCount = _deadbandBreachCounts[nodeId] ?? 0;
 
-    if (motionState == FilterMotionState.stationary) {
-      // Dynamic dead-band scales with distance zone
-      double deadband;
-      if (displayedDist <= 0.30) {
-        deadband = 0.02; // 2 cm in critical danger (high precision)
-      } else if (displayedDist <= 1.00) {
-        deadband = 0.03; // 3 cm in danger zone
-      } else if (displayedDist <= 2.00) {
-        deadband = 0.05; // 5 cm in warning zone
-      } else {
-        deadband = min(0.10, 0.04 * displayedDist); // 6-10 cm in safe zone
-      }
-
-      if ((calculatedDistance - displayedDist).abs() >= deadband) {
-        displayedDist = calculatedDistance;
-      }
+    // Dynamic dead-band scales with distance zone
+    double deadband;
+    if (lockedDist <= 0.50) {
+      deadband = 0.04; // 4 cm in critical danger
+    } else if (lockedDist <= 1.20) {
+      deadband = 0.08; // 8 cm in danger zone
+    } else if (lockedDist <= 2.50) {
+      deadband = 0.16; // 16 cm in warning zone
     } else {
-      // In moving or fastAttack mode, update immediately without dead-band suppression
-      displayedDist = calculatedDistance;
+      deadband = min(0.35, 0.08 * lockedDist); // up to 35 cm in safe zone
     }
 
-    _displayedDistances[nodeId] = displayedDist;
+    final diffFromLocked = (calculatedDistance - lockedDist).abs();
+
+    if (motionState == FilterMotionState.stationary) {
+      if (diffFromLocked >= deadband) {
+        breachCount++;
+        if (breachCount >= 2 || diffFromLocked >= 1.8 * deadband) {
+          lockedDist = calculatedDistance;
+          breachCount = 0;
+        }
+      } else {
+        breachCount = 0;
+      }
+      smoothDist = lockedDist;
+    } else {
+      // In moving or fastAttack mode, smoothly glide to new position
+      breachCount = 0;
+      final alpha = (motionState == FilterMotionState.fastAttack) ? 0.80 : 0.60;
+      smoothDist = alpha * calculatedDistance + (1.0 - alpha) * smoothDist;
+      lockedDist = smoothDist;
+    }
+
+    _displayedDistances[nodeId] = lockedDist;
+    _smoothDistances[nodeId] = smoothDist;
+    _deadbandBreachCounts[nodeId] = breachCount;
 
     return DistanceResult(
-      distanceMeters: displayedDist,
+      distanceMeters: smoothDist,
       filteredRssi: filteredRssiInt,
       rawRssi: rawRssi,
       motionState: motionState,
@@ -235,10 +250,55 @@ class DistanceEngine {
     );
   }
 
+  // Displayed wristband distance memory & state
+  final Map<int, double> _displayedWbDistances = {};
+  final Map<int, double> _smoothWbDistances = {};
+  final Map<int, int> _wbBreachCounts = {};
+
+  /// Stabilize wristband-reported distance with tight 3cm anti-flicker deadband.
+  /// The wristband on-chip firmware ALREADY applies the calibrated Dual-Regime Kalman filter,
+  /// so the mobile app must not add a heavy secondary deadband that suppresses real movement!
+  double filterWristbandDistance({
+    required int nodeId,
+    required double incomingDistanceM,
+  }) {
+    final locked = _displayedWbDistances[nodeId];
+    if (locked == null) {
+      _displayedWbDistances[nodeId] = incomingDistanceM;
+      _smoothWbDistances[nodeId] = incomingDistanceM;
+      _wbBreachCounts[nodeId] = 0;
+      return incomingDistanceM;
+    }
+
+    final diff = (incomingDistanceM - locked).abs();
+
+    // Microscopic jitter of <= 3 cm is absorbed to prevent stationary display numeric flicker.
+    // Genuine physical movement (> 3 cm) updates instantly without secondary lag!
+    if (diff <= 0.03) {
+      return locked;
+    }
+
+    _displayedWbDistances[nodeId] = incomingDistanceM;
+    _smoothWbDistances[nodeId] = incomingDistanceM;
+    _wbBreachCounts[nodeId] = 0;
+    return incomingDistanceM;
+  }
+
+  void clearWbDistance(int nodeId) {
+    _displayedWbDistances.remove(nodeId);
+    _smoothWbDistances.remove(nodeId);
+    _wbBreachCounts.remove(nodeId);
+  }
+
   void resetFilter(int nodeId) {
     _kalmanFilters[nodeId]?.reset();
     _sampleBuffers[nodeId]?.clear();
     _displayedDistances.remove(nodeId);
+    _smoothDistances.remove(nodeId);
+    _deadbandBreachCounts.remove(nodeId);
+    _displayedWbDistances.remove(nodeId);
+    _smoothWbDistances.remove(nodeId);
+    _wbBreachCounts.remove(nodeId);
     _lastCalculatedDistances.remove(nodeId);
     _lastCalculationTimes.remove(nodeId);
   }

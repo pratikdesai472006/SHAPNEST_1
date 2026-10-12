@@ -34,9 +34,12 @@ class NodeCard extends StatelessWidget {
         ? node.directFilteredRssi
         : node.wbFilteredRssi;
 
+    final isWristband = trackingSource == TrackingSource.wristband;
     final isOnline = state != NodeState.offline && distM != null;
-    final zone = isOnline ? node.getZone(distM) : null;
-    final isDanger = isOnline && (zone == ProximityZone.criticalDanger || zone == ProximityZone.danger);
+    final zone = (isWristband && isOnline) ? node.getZone(distM) : null;
+    final isDanger = isWristband &&
+        isOnline &&
+        (zone == ProximityZone.criticalDanger || zone == ProximityZone.danger);
 
     // Dynamic Card Border & Background Colors
     final cardBg = isDark ? const Color(0xFF1E293B) : Colors.white;
@@ -89,9 +92,17 @@ class NodeCard extends StatelessWidget {
                   const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
                   const SizedBox(width: 6),
                   Text(
-                    zone == ProximityZone.criticalDanger
-                        ? 'CRITICAL PROXIMITY HAZARD (< 30 cm)!'
-                        : 'PROXIMITY DANGER ZONE (30–100 cm)!',
+                    node.id == 2 && node.isIronHot
+                        ? (zone == ProximityZone.criticalDanger
+                            ? 'CRITICAL BURN HAZARD (< 30 cm & HOT)!'
+                            : 'BURN DANGER ZONE (30–100 cm & HOT)!')
+                        : (node.id == 2 && node.isIronWarm
+                            ? (zone == ProximityZone.criticalDanger
+                                ? 'WARM IRON CAUTION (< 30 cm & WARM)!'
+                                : 'WARM IRON PROXIMITY (30–100 cm & WARM)!')
+                            : (zone == ProximityZone.criticalDanger
+                                ? 'CRITICAL PROXIMITY HAZARD (< 30 cm)!'
+                                : 'PROXIMITY DANGER ZONE (30–100 cm)!')),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 11,
@@ -128,6 +139,8 @@ class NodeCard extends StatelessWidget {
                         children: [
                           Text(
                             'Node ${node.id} — ${node.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: theme.colorScheme.onSurface,
                               fontSize: 16,
@@ -149,8 +162,36 @@ class NodeCard extends StatelessWidget {
                     ),
                     // State Badge
                     _buildStatePill(state, isDark),
+                    if (node.id == 3 && state != NodeState.offline) ...[
+                      const SizedBox(width: 6),
+                      _buildDoorHeaderPill(node.doorState, isDark),
+                    ],
+                    if (node.id == 2 && state != NodeState.offline) ...[
+                      const SizedBox(width: 6),
+                      _buildIronHeaderPill(node.ironTemperatureC, isDark),
+                    ],
                   ],
                 ),
+
+                // Door Reed Switch Live Status (Node 3 only)
+                if (node.id == 3) ...[
+                  const SizedBox(height: 12),
+                  _buildDoorSensorBanner(
+                    state == NodeState.offline ? DoorState.unknown : node.doorState,
+                    isDark,
+                    theme,
+                  ),
+                ],
+
+                // Iron Temperature Live Status (Node 2 only)
+                if (node.id == 2) ...[
+                  const SizedBox(height: 12),
+                  _buildIronTemperatureBanner(
+                    state == NodeState.offline ? null : node.ironTemperatureC,
+                    isDark,
+                    theme,
+                  ),
+                ],
 
                 const SizedBox(height: 16),
 
@@ -189,7 +230,7 @@ class NodeCard extends StatelessWidget {
                                     Text(
                                       unit == 'm'
                                           ? distM.toStringAsFixed(2)
-                                          : (distM * 100).toInt().toString(),
+                                          : (distM * 100).round().toString(),
                                       style: TextStyle(
                                         color: isDanger
                                             ? const Color(0xFFFF1744)
@@ -290,40 +331,48 @@ class NodeCard extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Icon(
-                          node.isUserCalibrated ? Icons.verified : Icons.tune,
-                          size: 14,
-                          color: node.isUserCalibrated
-                              ? Colors.amber
-                              : (isDark ? Colors.white38 : const Color(0xFF94A3B8)),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '1m: ${node.calibratedA} dBm | n: ${node.pathLossExpN.toStringAsFixed(1)}',
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            fontSize: 11,
-                            fontFamily: 'monospace',
+                    Flexible(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            node.isUserCalibrated ? Icons.verified : Icons.tune,
+                            size: 14,
+                            color: node.isUserCalibrated
+                                ? Colors.amber
+                                : (isDark ? Colors.white38 : const Color(0xFF94A3B8)),
                           ),
-                        ),
-                        if (node.isUserCalibrated) ...[
                           const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'CAL',
-                              style: TextStyle(color: Colors.amber, fontSize: 8, fontWeight: FontWeight.bold),
+                          Flexible(
+                            child: Text(
+                              '1m: ${node.calibratedA} dBm | n: ${node.pathLossExpN.toStringAsFixed(1)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant,
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                              ),
                             ),
                           ),
+                          if (node.isUserCalibrated) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'CAL',
+                                style: TextStyle(color: Colors.amber, fontSize: 8, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
 
                     // Quick Calibrate Button
                     TextButton.icon(
@@ -486,6 +535,283 @@ class NodeCard extends StatelessWidget {
           ),
         );
       }),
+    );
+  }
+
+  Widget _buildDoorHeaderPill(DoorState doorState, bool isDark) {
+    final isOpen = doorState == DoorState.open;
+    final isUnknown = doorState == DoorState.unknown;
+    final color = isUnknown
+        ? const Color(0xFF94A3B8)
+        : (isOpen ? const Color(0xFFFF3D00) : const Color(0xFF10B981));
+    final text = isUnknown ? 'STATUS ?' : (isOpen ? 'DOOR OPEN' : 'DOOR CLOSED');
+    final icon = isUnknown
+        ? Icons.help_outline_rounded
+        : (isOpen ? Icons.meeting_room_outlined : Icons.lock_outline_rounded);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.2 : 0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withValues(alpha: isDark ? 0.6 : 0.5),
+          width: 1.0,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDoorSensorBanner(DoorState doorState, bool isDark, ThemeData theme) {
+    final isOpen = doorState == DoorState.open;
+    final isUnknown = doorState == DoorState.unknown;
+
+    final color = isUnknown
+        ? const Color(0xFF94A3B8)
+        : (isOpen ? const Color(0xFFFF3D00) : const Color(0xFF10B981));
+
+    final icon = isUnknown
+        ? Icons.help_outline_rounded
+        : (isOpen ? Icons.meeting_room_outlined : Icons.door_front_door_outlined);
+
+    final title = isUnknown
+        ? 'DOOR STATUS UNKNOWN'
+        : (isOpen ? 'DOOR IS OPEN' : 'DOOR IS CLOSED');
+
+    final subtext = isUnknown
+        ? 'Awaiting BLE telemetry...'
+        : (isOpen ? 'Magnetic Reed Contact Separated' : 'Magnetic Contact Securely Closed');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.16 : 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withValues(alpha: isDark ? 0.5 : 0.4),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 16),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Text(
+                  subtext,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 9.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              isOpen ? 'OPEN' : (isUnknown ? 'WAIT' : 'CLOSED'),
+              style: TextStyle(
+                color: color,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIronHeaderPill(int? tempC, bool isDark) {
+    final isUnknown = tempC == null;
+    final isHot = !isUnknown && tempC >= ShapnestProtocol.ironHotThresholdC;
+    final isWarm = !isUnknown && tempC >= ShapnestProtocol.ironWarmThresholdC && !isHot;
+
+    final color = isUnknown
+        ? const Color(0xFF94A3B8)
+        : (isHot
+            ? const Color(0xFFFF1744)
+            : (isWarm ? const Color(0xFFFF9100) : const Color(0xFF10B981)));
+    final text = isUnknown
+        ? 'TEMP ?'
+        : (isHot ? '$tempC°C HOT' : (isWarm ? '$tempC°C WARM' : '$tempC°C SAFE'));
+    final icon = isUnknown
+        ? Icons.help_outline_rounded
+        : (isHot
+            ? Icons.local_fire_department_rounded
+            : (isWarm ? Icons.whatshot_outlined : Icons.thermostat_rounded));
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.2 : 0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withValues(alpha: isDark ? 0.6 : 0.5),
+          width: 1.0,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIronTemperatureBanner(int? tempC, bool isDark, ThemeData theme) {
+    final isUnknown = tempC == null;
+    final isHot = !isUnknown && tempC >= ShapnestProtocol.ironHotThresholdC;
+    final isWarm = !isUnknown && tempC >= ShapnestProtocol.ironWarmThresholdC && !isHot;
+
+    final color = isUnknown
+        ? const Color(0xFF94A3B8)
+        : (isHot
+            ? const Color(0xFFFF1744)
+            : (isWarm ? const Color(0xFFFF9100) : const Color(0xFF10B981)));
+
+    final icon = isUnknown
+        ? Icons.help_outline_rounded
+        : (isHot
+            ? Icons.local_fire_department_rounded
+            : (isWarm ? Icons.whatshot_outlined : Icons.check_circle_outline_rounded));
+
+    final title = isUnknown
+        ? 'TEMPERATURE UNKNOWN'
+        : (isHot
+            ? 'IRON IS DANGEROUSLY HOT ($tempC°C)'
+            : (isWarm
+                ? 'IRON IS WARM ($tempC°C)'
+                : 'IRON IS AT SAFE TEMPERATURE ($tempC°C)'));
+
+    final subtext = isUnknown
+        ? 'Awaiting BLE temperature telemetry...'
+        : (isHot
+            ? 'High burn hazard! Keep children away'
+            : (isWarm
+                ? 'Surface is cooling or warming up'
+                : 'Safe to touch / Ambient temperature'));
+
+    final badgeText = isUnknown
+        ? 'WAIT'
+        : (isHot ? 'HOT' : (isWarm ? 'WARM' : 'SAFE'));
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.16 : 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withValues(alpha: isDark ? 0.5 : 0.4),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 16),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Text(
+                  subtext,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 9.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              badgeText,
+              style: TextStyle(
+                color: color,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

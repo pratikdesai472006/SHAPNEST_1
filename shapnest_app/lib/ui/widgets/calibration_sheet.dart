@@ -188,14 +188,17 @@ class _CalibrationSheetState extends State<CalibrationSheet> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'Step 1: 1-Meter Reference RSSI (A)',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
+                          Expanded(
+                            child: Text(
+                              'Step 1: 1-Meter Reference RSSI (A)',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurface,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
@@ -341,14 +344,17 @@ class _CalibrationSheetState extends State<CalibrationSheet> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'Step 2: Path Loss Exponent (n)',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
+                          Expanded(
+                            child: Text(
+                              'Step 2: Path Loss Exponent (n)',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurface,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(

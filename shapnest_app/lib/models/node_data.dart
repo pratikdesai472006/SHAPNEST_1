@@ -24,6 +24,12 @@ class NodeData {
   DateTime? wbLastSeen;
   NodeState wbState;
 
+  // Attached Sensor State (e.g. Magnetic Reed Switch for Node 3 Door)
+  DoorState doorState;
+
+  // Attached Sensor State for Node 2 Iron (Temperature in °C)
+  int? ironTemperatureC;
+
   // Calibration parameters
   int calibratedA; // Reference RSSI @ 1m (in dBm)
   double pathLossExpN; // Environmental factor n
@@ -42,6 +48,8 @@ class NodeData {
     this.calibratedA = ShapnestProtocol.defaultRefRssi1m,
     this.pathLossExpN = 2.2,
     this.isUserCalibrated = false,
+    this.doorState = DoorState.unknown,
+    this.ironTemperatureC,
     this.directDistanceM,
     this.directRawRssi,
     this.directFilteredRssi,
@@ -55,6 +63,17 @@ class NodeData {
     this.packetCount = 0,
     this.packetsPerSecond = 0.0,
   });
+
+  /// Whether the iron is dangerously hot (>= 50°C)
+  bool get isIronHot =>
+      ironTemperatureC != null &&
+      ironTemperatureC! >= ShapnestProtocol.ironHotThresholdC;
+
+  /// Whether the iron is warm (40°C - 49°C)
+  bool get isIronWarm =>
+      ironTemperatureC != null &&
+      ironTemperatureC! >= ShapnestProtocol.ironWarmThresholdC &&
+      !isIronHot;
 
   /// Check whether the node is currently in the danger zone
   bool isDanger(double? distanceM) {

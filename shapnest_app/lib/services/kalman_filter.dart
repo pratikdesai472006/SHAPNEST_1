@@ -13,28 +13,31 @@ enum FilterMotionState {
 /// - In FAST-ATTACK state (approaching danger): Instantly snaps to closer distance (K ~ 0.80).
 class RssiKalmanFilter {
   double _x = 0.0; // Estimated state (Filtered RSSI)
-  double _p = 1.0; // Estimation error covariance
+  double _p = 4.0; // Estimation error covariance
 
-  // Stationary Tuning Parameters
-  static const double _qStationary = 0.005; // Minimal process noise when still
-  static const double _rStationary = 14.0;  // High measurement noise resistance
+  // Stationary Tuning Parameters: suppresses multipath RF flutter without infinite lag (K ~ 0.02)
+  static const double _qStationary = 0.005;
+  static const double _rStationary = 14.0;
 
-  // Moving Tuning Parameters
-  static const double _qMoving = 0.35;      // Higher process noise during movement
-  static const double _rMoving = 1.50;      // Low measurement noise to follow motion
+  // Moving Tuning Parameters: responsive tracking of physical motion (K ~ 0.45)
+  static const double _qMoving = 0.50;
+  static const double _rMoving = 1.00;
 
-  // Fast Attack (Approaching Danger) Parameters
-  static const double _qFastAttack = 0.80;  // Extreme process noise
-  static const double _rFastAttack = 0.60;  // Minimal measurement resistance
+  // Fast Attack: Rapid approach into danger or initial acquisition (K ~ 0.85)
+  static const double _qFastAttack = 1.40;
+  static const double _rFastAttack = 0.30;
 
   // Thresholds (dBm)
-  static const double _stationaryDeltaThresh = 2.0; // Typical Rayleigh indoor noise
-  static const double _movementDeltaThresh   = 3.0; // Meaningful step change
-  static const double _fastAttackDeltaThresh = 4.0; // Rapid approach (+dBm = closer)
+  static const double _stationaryDeltaThresh = 2.2; // Typical indoor noise envelope (<= 2.2 dBm)
+  static const double _movementDeltaThresh   = 3.0; // Sustained physical movement
+  static const double _fastAttackDeltaThresh = 5.0; // Rapid approach into danger zone
 
   bool _isInitialized = false;
+  int _warmupSamples = 5;
   FilterMotionState _motionState = FilterMotionState.stationary;
   int _consecutiveStationarySamples = 0;
+  int _consecutiveMovingSamples = 0;
+  double _lastDelta = 0.0;
   final List<double> _recentDeltas = [];
 
   RssiKalmanFilter();
@@ -47,10 +50,13 @@ class RssiKalmanFilter {
   double filter(double rawRssi) {
     if (!_isInitialized) {
       _x = rawRssi;
-      _p = 1.0;
+      _p = 4.0;
       _isInitialized = true;
-      _motionState = FilterMotionState.stationary;
-      _consecutiveStationarySamples = 5;
+      _warmupSamples = 5;
+      _motionState = FilterMotionState.fastAttack;
+      _consecutiveStationarySamples = 0;
+      _consecutiveMovingSamples = 2;
+      _lastDelta = 0.0;
       return _x;
     }
 
@@ -68,23 +74,40 @@ class RssiKalmanFilter {
         (_recentDeltas.every((d) => d > 1.5) ||
         _recentDeltas.every((d) => d < -1.5));
 
-    // Fast Attack: Signal is strengthening rapidly (device approaching danger)
-    if (delta >= _fastAttackDeltaThresh || (delta > 2.5 && isConsistentDirection && delta > 0)) {
+    // Rapid warm-up phase (first 5 samples after node detection)
+    if (_warmupSamples > 0) {
+      _warmupSamples--;
       _motionState = FilterMotionState.fastAttack;
       _consecutiveStationarySamples = 0;
+      _consecutiveMovingSamples = 2;
     }
-    // Normal Movement: Meaningful deviation or consistent directional drift
-    else if (absDelta >= _movementDeltaThresh || isConsistentDirection) {
-      _motionState = FilterMotionState.moving;
+    // Fast Attack: Rapid approach towards beacon (getting closer to danger) or massive step (>= 8.0)
+    else if ((delta >= _fastAttackDeltaThresh && (_x < -64.0 || rawRssi > -60.0)) || absDelta >= 8.0) {
+      _motionState = FilterMotionState.fastAttack;
       _consecutiveStationarySamples = 0;
+      _consecutiveMovingSamples = 3;
     }
-    // Stationary: Delta is within typical stationary RF noise envelope (<= 2.0 dBm)
-    else if (absDelta <= _stationaryDeltaThresh) {
-      _consecutiveStationarySamples++;
-      if (_consecutiveStationarySamples >= 3) {
-        _motionState = FilterMotionState.stationary;
+    // Normal Movement: Meaningful deviation with consistent direction or substantial step
+    else if (absDelta >= _movementDeltaThresh) {
+      final bool sameDirection = (delta * _lastDelta > 0.0);
+      if (sameDirection || isConsistentDirection || absDelta >= 5.0) {
+        _consecutiveMovingSamples++;
+        if (_consecutiveMovingSamples >= 2 || absDelta >= 6.0) {
+          _motionState = FilterMotionState.moving;
+          _consecutiveStationarySamples = 0;
+        }
       }
     }
+    // Stationary: Delta is within typical stationary RF noise envelope (<= 2.2 dBm)
+    else if (absDelta <= _stationaryDeltaThresh) {
+      _consecutiveStationarySamples++;
+      if (_consecutiveStationarySamples >= 2) {
+        _motionState = FilterMotionState.stationary;
+        _consecutiveMovingSamples = 0;
+      }
+    }
+
+    _lastDelta = delta;
 
     // 3. Select Covariances Based on Adaptive Motion State
     double q;
@@ -119,9 +142,12 @@ class RssiKalmanFilter {
   void reset() {
     _isInitialized = false;
     _x = 0.0;
-    _p = 1.0;
-    _motionState = FilterMotionState.stationary;
+    _p = 4.0;
+    _warmupSamples = 5;
+    _motionState = FilterMotionState.fastAttack;
     _consecutiveStationarySamples = 0;
+    _consecutiveMovingSamples = 0;
+    _lastDelta = 0.0;
     _recentDeltas.clear();
   }
 
@@ -132,6 +158,8 @@ class RssiKalmanFilter {
     _isInitialized = true;
     _motionState = FilterMotionState.stationary;
     _consecutiveStationarySamples = 5;
+    _consecutiveMovingSamples = 0;
+    _lastDelta = 0.0;
     _recentDeltas.clear();
   }
 }

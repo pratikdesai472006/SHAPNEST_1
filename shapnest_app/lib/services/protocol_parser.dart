@@ -7,12 +7,14 @@ class ParsedNodeBeacon {
   final int calibratedRssi1m;
   final double pathLossExpN;
   final int sequence;
+  final int sensorState;
 
   ParsedNodeBeacon({
     required this.nodeId,
     required this.calibratedRssi1m,
     required this.pathLossExpN,
     required this.sequence,
+    this.sensorState = 0,
   });
 }
 
@@ -125,12 +127,14 @@ class ProtocolParser {
       final rawCalA = ByteData.view(Uint8List.fromList([bytes[2]]).buffer).getInt8(0);
       final expX10 = bytes[3];
       final seq = bytes[4];
+      final sensorState = bytes.length >= 6 ? bytes[5] : 0;
 
       return ParsedNodeBeacon(
         nodeId: nodeId,
         calibratedRssi1m: rawCalA,
         pathLossExpN: expX10 > 0 ? (expX10 / 10.0) : 2.2,
         sequence: seq,
+        sensorState: sensorState,
       );
     }
 

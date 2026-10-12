@@ -31,8 +31,9 @@ class BleService extends ChangeNotifier {
   // Nodes list (Node 1: Fan, Node 2: Iron, Node 3: Door)
   late List<NodeData> nodes;
 
-  // Active tracking display mode
-  TrackingSource trackingSource = TrackingSource.directPhone;
+  // Active tracking display mode (Defaults to Child Wristband for instant tracking)
+  TrackingSource trackingSource = TrackingSource.wristband;
+  bool _userExplicitlySelectedSource = false;
 
   // Wristband state
   bool isWristbandOnline = false;
@@ -89,6 +90,10 @@ class BleService extends ChangeNotifier {
             statusMessage = 'Bluetooth is OFF';
           } else {
             statusMessage = 'Bluetooth Ready';
+            // Auto-start continuous scanning immediately once Bluetooth is ready
+            if (!isScanning && !isSimulating) {
+              startScan();
+            }
           }
           notifyListeners();
         }, onError: (e) {
@@ -102,8 +107,8 @@ class BleService extends ChangeNotifier {
       isBluetoothAvailable = false;
     }
 
-    // Start periodic watchdog timer for staleness & offline detection (1 Hz)
-    _stalenessTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    // Start periodic watchdog timer for staleness & offline detection (5 Hz)
+    _stalenessTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
       _checkStaleness();
     });
 
@@ -199,6 +204,7 @@ class BleService extends ChangeNotifier {
   }
 
   void setTrackingSource(TrackingSource source) {
+    _userExplicitlySelectedSource = true;
     trackingSource = source;
     _addLog('# [LOG] Switched tracking source to: ${source == TrackingSource.directPhone ? "Direct Phone" : "Child Wristband"}');
     notifyListeners();
@@ -225,6 +231,33 @@ class BleService extends ChangeNotifier {
         node.directRawRssi = rawRssi;
         node.directLastSeen = now;
         node.directState = NodeState.active;
+
+        // Adopt over-the-air broadcasted calibration unless user calibrated manually on phone
+        if (!node.isUserCalibrated) {
+          node.calibratedA = parsed.calibratedRssi1m;
+          node.pathLossExpN = parsed.pathLossExpN;
+        }
+
+        // Update Door Reed Switch State if Node 3
+        if (nodeId == 3) {
+          final newDoorState = (parsed.sensorState == ShapnestProtocol.doorOpen)
+              ? DoorState.open
+              : DoorState.closed;
+          if (node.doorState != newDoorState) {
+            node.doorState = newDoorState;
+            _addLog('# [DOOR EVENT] Node 3 Door changed -> ${newDoorState == DoorState.open ? "OPEN [ALERT]" : "CLOSED [SECURE]"}');
+          }
+        }
+
+        // Update Iron Temperature if Node 2 (ignore zero from unpopulated fallback beacons)
+        if (nodeId == 2 && parsed.sensorState > 0) {
+          final tempC = parsed.sensorState;
+          if (node.ironTemperatureC != tempC) {
+            node.ironTemperatureC = tempC;
+            final isHot = tempC >= ShapnestProtocol.ironHotThresholdC;
+            _addLog('# [IRON EVENT] Node 2 Iron Temp -> $tempC°C ${isHot ? "[HOT ALERT]" : "[SAFE]"}');
+          }
+        }
 
         // Feed to Distance Engine
         final distRes = distanceEngine.processRssi(
@@ -254,13 +287,27 @@ class BleService extends ChangeNotifier {
         wristbandSequence = parsed.sequence;
         lastWristbandSeen = now;
 
+        // Auto-switch to Wristband Tracking mode when wristband telemetry is detected
+        if (!_userExplicitlySelectedSource && trackingSource == TrackingSource.directPhone) {
+          trackingSource = TrackingSource.wristband;
+          _addLog('# [LOG] Child Wristband detected! Auto-selected Wristband Tracking mode.');
+        }
+
         for (final block in parsed.nodes) {
           final nodeIndex = nodes.indexWhere((n) => n.id == block.nodeId);
           if (nodeIndex == -1) continue;
 
           final node = nodes[nodeIndex];
           node.wbState = block.state;
-          node.wbDistanceM = block.distanceM;
+          if (block.distanceM != null) {
+            node.wbDistanceM = distanceEngine.filterWristbandDistance(
+              nodeId: block.nodeId,
+              incomingDistanceM: block.distanceM!,
+            );
+          } else {
+            node.wbDistanceM = null;
+            distanceEngine.clearWbDistance(block.nodeId);
+          }
           node.wbFilteredRssi = block.filteredRssi;
           node.wbLastSeen = now;
         }
@@ -286,7 +333,12 @@ class BleService extends ChangeNotifier {
       if (wbAge > ShapnestProtocol.wristbandOfflineTimeout) {
         if (isWristbandOnline) {
           isWristbandOnline = false;
-          _addLog('# [WARN] Child Wristband LOST (> 3500ms silence).');
+          for (final node in nodes) {
+            node.wbState = NodeState.offline;
+            node.wbDistanceM = null;
+            distanceEngine.clearWbDistance(node.id);
+          }
+          _addLog('# [WARN] Child Wristband LOST (> ${ShapnestProtocol.wristbandOfflineTimeout.inMilliseconds}ms silence).');
         }
       }
     }
@@ -308,9 +360,16 @@ class BleService extends ChangeNotifier {
         if (age > ShapnestProtocol.nodeOfflineTimeout) {
           node.wbState = NodeState.offline;
           node.wbDistanceM = null;
+          distanceEngine.clearWbDistance(node.id);
         } else if (age > ShapnestProtocol.nodeActiveTimeout) {
           node.wbState = NodeState.stale;
         }
+      }
+
+      // Reset sensor state only when both direct link and wristband telemetry are offline
+      if (node.directState == NodeState.offline && node.wbState == NodeState.offline) {
+        if (node.id == 2) node.ironTemperatureC = null;
+        if (node.id == 3) node.doorState = DoorState.unknown;
       }
     }
     notifyListeners();
@@ -427,6 +486,14 @@ class BleService extends ChangeNotifier {
         node.wbFilteredRssi = node.directFilteredRssi;
         node.wbState = NodeState.active;
         node.wbLastSeen = now;
+
+        // Dynamic simulated sensor states
+        if (node.id == 3) {
+          node.doorState = (sin(_simAngle) > 0) ? DoorState.open : DoorState.closed;
+        } else if (node.id == 2) {
+          // Dynamic realistic iron temp oscillation (30°C to 65°C)
+          node.ironTemperatureC = 45 + (18 * sin(_simAngle)).round();
+        }
       }
 
       isWristbandOnline = true;
@@ -450,6 +517,9 @@ class BleService extends ChangeNotifier {
       node.directDistanceM = null;
       node.wbState = NodeState.offline;
       node.wbDistanceM = null;
+      if (node.id == 2) node.ironTemperatureC = null;
+      if (node.id == 3) node.doorState = DoorState.unknown;
+      distanceEngine.clearWbDistance(node.id);
     }
     isWristbandOnline = false;
     notifyListeners();
