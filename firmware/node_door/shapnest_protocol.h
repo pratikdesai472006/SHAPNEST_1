@@ -42,7 +42,7 @@ extern "C" {
 /* -------------------------------------------------------------------------- */
 #define SHAPNEST_DEFAULT_TX_POWER_DBM        3       /* +3 dBm */
 #define SHAPNEST_DEFAULT_REF_RSSI_1M        -59      /* Reference RSSI at 1 meter in dBm */
-#define SHAPNEST_DEFAULT_PATH_LOSS_EXP_X10   22      /* 22 represents n = 2.2 */
+#define SHAPNEST_DEFAULT_PATH_LOSS_EXP_X10   16      /* 16 represents n = 1.6 (free space) */
 
 /* Operational Distance Bounds (Centimeters) */
 #define SHAPNEST_DISTANCE_MIN_CM             15      /* Minimum operational floor: 0.15 m */

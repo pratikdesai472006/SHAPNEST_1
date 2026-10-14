@@ -41,7 +41,7 @@ extern "C" {
 /* RF & CALIBRATION DEFAULTS                                                  */
 /* -------------------------------------------------------------------------- */
 #define SHAPNEST_DEFAULT_TX_POWER_DBM        3       /* +3 dBm */
-#define SHAPNEST_DEFAULT_REF_RSSI_1M        -59      /* Reference RSSI at 1 meter in dBm */
+#define SHAPNEST_DEFAULT_REF_RSSI_1M        -77      /* Reference RSSI at 1 meter in dBm (free space) */
 #define SHAPNEST_DEFAULT_PATH_LOSS_EXP_X10   22      /* 22 represents n = 2.2 */
 
 /* Operational Distance Bounds (Centimeters) */

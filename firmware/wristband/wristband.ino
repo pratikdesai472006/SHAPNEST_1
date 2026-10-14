@@ -362,7 +362,7 @@ void loop() {
         print_diagnostic_heartbeat(now);
     }
 
-    delay(250); // 4 Hz telemetry refresh (250 ms) for rapid online/offline responsiveness
+    delay(100); // 10 Hz telemetry refresh (100 ms) for high-speed reading & rapid offline response
 }
 
 // ============================================================================
