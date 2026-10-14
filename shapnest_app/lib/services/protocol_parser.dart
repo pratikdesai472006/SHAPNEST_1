@@ -7,12 +7,14 @@ class ParsedNodeBeacon {
   final int calibratedRssi1m;
   final double pathLossExpN;
   final int sequence;
+  final int sensorState;
 
   ParsedNodeBeacon({
     required this.nodeId,
     required this.calibratedRssi1m,
     required this.pathLossExpN,
     required this.sequence,
+    this.sensorState = 0,
   });
 }
 
@@ -69,6 +71,10 @@ class ProtocolParser {
           if (parsed != null) return parsed;
         }
       }
+
+      // Case 3: Direct structural parse (handles OEM stacks that remap company ID)
+      final directParsed = _parsePayloadBytes(rawBytes, devName);
+      if (directParsed != null) return directParsed;
     }
 
     // Fallback: check device name pattern (e.g. "SHAPNEST_N1", "SHAPNEST_WB1", "WB1")
@@ -86,7 +92,7 @@ class ProtocolParser {
     }
 
     // Fallback for Wristband by device name
-    if (devName.contains('SHAPNEST_WB') || devName == 'WB1' || devName.contains('WB1')) {
+    if (devName.contains('SHAPNEST_WB') || devName.contains('WB1')) {
       for (final rawBytes in mfrDataMap.values) {
         final parsed = _parsePayloadBytes(rawBytes, devName);
         if (parsed is ParsedWristbandTelemetry) return parsed;
@@ -121,33 +127,30 @@ class ProtocolParser {
       final rawCalA = ByteData.view(Uint8List.fromList([bytes[2]]).buffer).getInt8(0);
       final expX10 = bytes[3];
       final seq = bytes[4];
+      final sensorState = bytes.length >= 6 ? bytes[5] : 0;
 
       return ParsedNodeBeacon(
         nodeId: nodeId,
         calibratedRssi1m: rawCalA,
         pathLossExpN: expX10 > 0 ? (expX10 / 10.0) : 2.2,
         sequence: seq,
+        sensorState: sensorState,
       );
     }
 
-    // Frame Type 0x02: Wristband Telemetry (Length: exactly 16 bytes after company ID)
+    // Frame Type 0x02: Wristband Telemetry (Length: 16 bytes after company ID)
     // [0] frame_type (0x02)
     // [1] wristband_id (1)
     // [2] sequence (uint8)
     // [3] node_count (3)
-    // Followed by 3 node blocks (4 bytes each):
+    // Followed by node blocks (4 bytes each):
     //   id_and_state (1 byte)
     //   distance_cm (2 bytes uint16 little endian)
     //   filtered_rssi (1 byte int8)
-    if (frameType == ShapnestProtocol.frameTypeWristbandTel && bytes.length >= 16) {
+    if (frameType == ShapnestProtocol.frameTypeWristbandTel && bytes.length >= 4) {
       final wbId = bytes[1];
       final seq = bytes[2];
       final nodeCount = bytes[3];
-
-      // Strict validation: must match SHAPNEST specification
-      if (wbId != ShapnestProtocol.targetWristbandId || nodeCount != ShapnestProtocol.maxNodes) {
-        return null;
-      }
 
       final List<ParsedWristbandNodeBlock> parsedBlocks = [];
       int offset = 4;
@@ -161,8 +164,14 @@ class ProtocolParser {
         final filteredRssi = ByteData.view(Uint8List.fromList([bytes[offset + 3]]).buffer).getInt8(0);
 
         double? distanceM;
-        if (distCm != ShapnestProtocol.distanceOfflineCm && state != NodeState.offline) {
-          distanceM = distCm / 100.0;
+        if (distCm != ShapnestProtocol.distanceOfflineCm &&
+            distCm > 0 &&
+            distCm <= 1500 &&
+            state != NodeState.offline) {
+          distanceM = (distCm / 100.0).clamp(
+            ShapnestProtocol.distanceMinM,
+            ShapnestProtocol.distanceMaxM,
+          );
         }
 
         parsedBlocks.add(ParsedWristbandNodeBlock(

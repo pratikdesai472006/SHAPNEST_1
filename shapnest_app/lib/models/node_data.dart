@@ -5,10 +5,15 @@ import 'shapnest_protocol.dart';
 
 class NodeData {
   final int id;
-  final String name;
+  String name;
   final IconData icon;
   final Color primaryColor;
-  final double dangerDistanceM; // Specific hazard boundary for this node
+  double dangerDistanceM; // Hazard boundary for Red zone (< dangerDistanceM)
+  double warningDistanceM; // Warning boundary for Yellow zone (dangerDistanceM .. warningDistanceM)
+
+  // Signal Strength (RSSI) Zone Thresholds (User configured: Red >= -60 dBm, Yellow >= -74 dBm)
+  int dangerRssiDbm; // Danger Red Zone threshold (default -60 dBm)
+  int warningRssiDbm; // Warning Yellow Zone threshold (default -74 dBm)
 
   // Direct Phone-to-Node Measurements
   double? directDistanceM;
@@ -24,13 +29,22 @@ class NodeData {
   DateTime? wbLastSeen;
   NodeState wbState;
 
-  // Calibration parameters
-  int directCalibratedA; // Reference RSSI @ 1m for Phone Link (in dBm)
-  int wbCalibratedA; // Reference RSSI @ 1m for Wristband Link (in dBm)
-  int get calibratedA => directCalibratedA;
-  set calibratedA(int val) => directCalibratedA = val;
-  double pathLossExpN; // Environmental factor n
+  // Attached Sensor / Hazard States
+  bool isFanOn; // Node 1 (Fan): true = spinning/ON (hazard active), false = OFF (safe)
+  int? ironTemperatureC; // Node 2 (Iron): Temperature in °C (>= 50°C is hot)
+  DoorState doorState; // Node 3 (Door): open = hazard active, closed = secure
+
+  // Dual Physical Calibration Parameters
+  int directCalibratedA; // Reference RSSI @ 1m for direct phone BLE link
+  int wbCalibratedA; // Reference RSSI @ 1m for child wristband link
+  double pathLossExpN; // Environmental factor n (default 1.6 in free space)
   bool isUserCalibrated;
+
+  int get calibratedA => wbCalibratedA;
+  set calibratedA(int val) {
+    wbCalibratedA = val;
+    directCalibratedA = val;
+  }
 
   // Statistics
   int packetCount;
@@ -41,12 +55,18 @@ class NodeData {
     required this.name,
     required this.icon,
     required this.primaryColor,
-    required this.dangerDistanceM,
+    this.dangerDistanceM = 0.30,
+    this.warningDistanceM = 0.70,
+    this.dangerRssiDbm = -60,
+    this.warningRssiDbm = -74,
     int? directCalibratedA,
     int? wbCalibratedA,
     int? calibratedA,
-    this.pathLossExpN = 2.2,
+    this.pathLossExpN = 1.6,
     this.isUserCalibrated = false,
+    this.isFanOn = true,
+    this.doorState = DoorState.unknown,
+    this.ironTemperatureC,
     this.directDistanceM,
     this.directRawRssi,
     this.directFilteredRssi,
@@ -60,36 +80,112 @@ class NodeData {
     this.packetCount = 0,
     this.packetsPerSecond = 0.0,
   })  : directCalibratedA = calibratedA ?? directCalibratedA ?? ShapnestProtocol.defaultRefRssi1m,
-        wbCalibratedA = wbCalibratedA ?? ShapnestProtocol.defaultWbRefRssi1m;
+        wbCalibratedA = calibratedA ?? wbCalibratedA ?? ShapnestProtocol.defaultWbRefRssi1m;
 
-  /// Check whether the node is currently in the dangerous zone (< 30 cm)
+  /// Whether the iron is dangerously hot (>= 50°C)
+  bool get isIronHot =>
+      ironTemperatureC != null &&
+      ironTemperatureC! >= ShapnestProtocol.ironHotThresholdC;
+
+  /// Whether the iron is warm (40°C - 49°C)
+  bool get isIronWarm =>
+      ironTemperatureC != null &&
+      ironTemperatureC! >= ShapnestProtocol.ironWarmThresholdC &&
+      !isIronHot;
+
+  /// Whether the physical hazard condition is currently fulfilled/active
+  /// - Fan: Fan is ON / spinning
+  /// - Iron: Iron is HOT (>= 50°C)
+  /// - Door: Door / window is OPEN
+  bool get isHazardConditionFulfilled {
+    switch (id) {
+      case 1:
+        return isFanOn;
+      case 2:
+        return isIronHot;
+      case 3:
+        return doorState == DoorState.open;
+      default:
+        return false;
+    }
+  }
+
+  /// Human-readable explanation of the current hazard condition
+  String get hazardDescription {
+    switch (id) {
+      case 1:
+        return isFanOn ? 'Fan is ON (Spinning Hazard)' : 'Fan is OFF';
+      case 2:
+        return isIronHot
+            ? 'Iron is HOT (${ironTemperatureC ?? 50}°C Burn Hazard)'
+            : (isIronWarm ? 'Iron is WARM (${ironTemperatureC ?? 40}°C)' : 'Iron is Cool');
+      case 3:
+        return doorState == DoorState.open ? 'Door/Window is OPEN' : 'Door is Closed';
+      default:
+        return 'Normal';
+    }
+  }
+
+  /// Check whether the node signal strength is in the Red Danger Zone (>= dangerRssiDbm, default -60 dBm)
+  bool isSignalDanger(int? rssi) {
+    if (rssi == null || rssi == ShapnestProtocol.rssiOffline) return false;
+    return rssi >= dangerRssiDbm;
+  }
+
+  /// Check whether the node signal strength is in the Yellow Warning Zone (dangerRssiDbm .. warningRssiDbm)
+  bool isSignalWarning(int? rssi) {
+    if (rssi == null || rssi == ShapnestProtocol.rssiOffline) return false;
+    return rssi < dangerRssiDbm && rssi >= warningRssiDbm;
+  }
+
+  /// Classify signal strength into standard 3 Radar / Proximity Zones:
+  /// - Red Zone: >= -60 dBm (Strong signal / Child is Near)
+  /// - Yellow Zone: -60 dBm to -75 dBm (Moderate signal)
+  /// - Green Zone: < -75 dBm (Weak signal / Far away)
+  ProximityZone? getSignalZone(int? rssi) {
+    if (rssi == null || rssi == ShapnestProtocol.rssiOffline) return null;
+    if (rssi >= dangerRssiDbm) {
+      return ProximityZone.danger; // Red Zone
+    } else if (rssi >= warningRssiDbm) {
+      return ProximityZone.warning; // Yellow Zone
+    } else {
+      return ProximityZone.safe; // Green Zone
+    }
+  }
+
+  /// True ONLY when signal strength is in Red Zone AND hazard condition is fulfilled!
+  /// "otherwise nothing to do"
+  bool isCriticalHazardAlert(int? rssi) {
+    return isSignalDanger(rssi) && isHazardConditionFulfilled;
+  }
+
+  /// Check whether the node is currently in the dangerous zone (< dangerDistanceM)
   bool isDanger(double? distanceM) {
     if (distanceM == null) return false;
-    return distanceM < 0.30;
+    return distanceM < dangerDistanceM;
   }
 
-  /// Check whether the node is currently in the yellow warning zone (30 - 67 cm)
+  /// Check whether the node is currently in the yellow warning zone (dangerDistanceM .. warningDistanceM)
   bool isWarning(double? distanceM) {
     if (distanceM == null) return false;
-    return distanceM >= 0.30 && distanceM <= 0.67;
+    return distanceM >= dangerDistanceM && distanceM <= warningDistanceM;
   }
 
-  /// Classify distance into standard SHAPNEST Safety Zones:
-  /// - Below 30 cm: Dangerous Zone (Red)
-  /// - 30 cm to 67 cm: Yellow Zone (Yellow/Warning)
-  /// - Further than 67 cm: Safe Zone (Green)
+  /// Classify distance into standard SHAPNEST Safety Zones
   ProximityZone? getZone(double? distanceM) {
     if (distanceM == null) return null;
-    if (distanceM < 0.30) {
+    if (distanceM <= 0.30) {
+      return ProximityZone.criticalDanger;
+    } else if (distanceM <= dangerDistanceM || distanceM <= 1.00) {
       return ProximityZone.danger;
-    } else if (distanceM <= 0.67) {
+    } else if (distanceM <= warningDistanceM || distanceM <= 2.00) {
       return ProximityZone.warning;
     } else {
       return ProximityZone.safe;
     }
   }
 
-  /// Create predefined default nodes
+  /// Create predefined default nodes with distinct free-space n = 1.6 values and signal zones
   static List<NodeData> createDefaultNodes() {
     return [
       NodeData(
@@ -98,6 +194,10 @@ class NodeData {
         icon: Icons.air_rounded,
         primaryColor: const Color(0xFF00E5FF), // Cyan
         dangerDistanceM: 0.60,
+        dangerRssiDbm: -60,
+        warningRssiDbm: -74,
+        pathLossExpN: 1.6, // Free space n = 1.6 for Node 1 Fan
+        isFanOn: true,
       ),
       NodeData(
         id: 2,
@@ -105,6 +205,9 @@ class NodeData {
         icon: Icons.iron_outlined,
         primaryColor: const Color(0xFFFF5252), // Red alert
         dangerDistanceM: 0.80,
+        dangerRssiDbm: -60,
+        warningRssiDbm: -74,
+        pathLossExpN: 1.6, // Free space n = 1.6 for Node 2 Iron
       ),
       NodeData(
         id: 3,
@@ -112,6 +215,10 @@ class NodeData {
         icon: Icons.door_front_door_outlined,
         primaryColor: const Color(0xFF76FF03), // Lime green
         dangerDistanceM: 0.50,
+        dangerRssiDbm: -60,
+        warningRssiDbm: -74,
+        pathLossExpN: 1.6, // Free space n = 1.6 for Node 3 Door
+        doorState: DoorState.unknown,
       ),
     ];
   }

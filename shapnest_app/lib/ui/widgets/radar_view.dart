@@ -7,13 +7,11 @@ import '../../services/ble_service.dart';
 class RadarView extends StatefulWidget {
   final List<NodeData> nodes;
   final TrackingSource trackingSource;
-  final String unit; // 'm' or 'cm'
 
   const RadarView({
     super.key,
     required this.nodes,
     required this.trackingSource,
-    required this.unit,
   });
 
   @override
@@ -50,7 +48,6 @@ class _RadarViewState extends State<RadarView> with SingleTickerProviderStateMix
           painter: RadarPainter(
             nodes: widget.nodes,
             trackingSource: widget.trackingSource,
-            unit: widget.unit,
             sweepAngle: _animController.value * 2 * pi,
             pulseValue: _animController.value,
             isDark: isDark,
@@ -64,7 +61,6 @@ class _RadarViewState extends State<RadarView> with SingleTickerProviderStateMix
 class RadarPainter extends CustomPainter {
   final List<NodeData> nodes;
   final TrackingSource trackingSource;
-  final String unit;
   final double sweepAngle;
   final double pulseValue;
   final bool isDark;
@@ -72,7 +68,6 @@ class RadarPainter extends CustomPainter {
   RadarPainter({
     required this.nodes,
     required this.trackingSource,
-    required this.unit,
     required this.sweepAngle,
     required this.pulseValue,
     required this.isDark,
@@ -105,53 +100,48 @@ class RadarPainter extends CustomPainter {
       ..strokeWidth = 1.5;
     canvas.drawCircle(center, maxRadius, borderPaint);
 
-    // 2. Safety Zone Shading (Dangerous Zone < 0.30m, Yellow Zone 0.30m - 0.67m)
-    final rDanger = (0.30 / ShapnestProtocol.distanceMaxM) * maxRadius;
-    final rYellow = (0.67 / ShapnestProtocol.distanceMaxM) * maxRadius;
+    // 2. Three Concentric Signal Strength Grid Rings:
+    // 1st Circle (Inner): Red Danger Zone (>= -60 dBm)
+    // 2nd Circle (Middle): Yellow Warning Zone (-60 to -74 dBm)
+    // 3rd Circle (Outer): Green Safe Zone (< -74 dBm)
+    final rRed = maxRadius * 0.35;
+    final rYellow = maxRadius * 0.70;
+    final rGreen = maxRadius * 1.00;
 
-    // Yellow Zone annulus (0.30m - 0.67m)
-    final yellowPaint = Paint()
-      ..color = const Color(0xFFFFEA00).withValues(alpha: isDark ? 0.08 : 0.06)
+    // Background Zone Fills
+    final redFill = Paint()
+      ..color = const Color(0xFFFF1744).withValues(alpha: isDark ? 0.08 : 0.05)
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(center, rYellow, yellowPaint);
+    canvas.drawCircle(center, rRed, redFill);
 
-    // Dangerous Zone disc (< 0.30m)
-    final dangerPaint = Paint()
-      ..color = const Color(0xFFFF1744).withValues(alpha: isDark ? 0.14 : 0.10)
+    final yellowFill = Paint()
+      ..color = const Color(0xFFFFD600).withValues(alpha: isDark ? 0.04 : 0.03)
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(center, rDanger, dangerPaint);
+    canvas.drawCircle(center, rYellow, yellowFill);
 
-    // 3. Concentric Distance Grid Rings
-    final ringDistancesM = [0.3, 0.67, 1.5, 3.0, 5.0, 8.0];
-    final ringPaint = Paint()
-      ..color = isDark
-          ? const Color(0xFF334155).withValues(alpha: 0.6)
-          : const Color(0xFF94A3B8).withValues(alpha: 0.5)
+    final greenFill = Paint()
+      ..color = const Color(0xFF00E676).withValues(alpha: isDark ? 0.03 : 0.02)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, rGreen, greenFill);
+
+    // Ring Strokes
+    final redRingPaint = Paint()
+      ..color = const Color(0xFFFF1744).withValues(alpha: isDark ? 0.6 : 0.5)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(center, rRed, redRingPaint);
 
-    for (final dist in ringDistancesM) {
-      final r = (dist / ShapnestProtocol.distanceMaxM) * maxRadius;
-      canvas.drawCircle(center, r, ringPaint);
+    final yellowRingPaint = Paint()
+      ..color = const Color(0xFFFFD600).withValues(alpha: isDark ? 0.5 : 0.4)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(center, rYellow, yellowRingPaint);
 
-      // Ring Distance Text Label
-      final label = dist == 0.67
-          ? (unit == 'm' ? '0.67m' : '67cm')
-          : (unit == 'm' ? '${dist.toStringAsFixed(1)}m' : '${(dist * 100).toInt()}cm');
-      final textSpan = TextSpan(
-        text: label,
-        style: TextStyle(
-          color: isDark ? Colors.white38 : const Color(0xFF64748B),
-          fontSize: 9,
-          fontWeight: FontWeight.w600,
-        ),
-      );
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-      )..layout();
-      textPainter.paint(canvas, Offset(center.dx + 4, center.dy - r - 12));
-    }
+    final greenRingPaint = Paint()
+      ..color = const Color(0xFF00E676).withValues(alpha: isDark ? 0.5 : 0.4)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(center, rGreen, greenRingPaint);
 
     // 3. Crosshairs
     final crossHairPaint = Paint()
@@ -167,7 +157,9 @@ class RadarPainter extends CustomPainter {
       center.dx + maxRadius * cos(sweepAngle),
       center.dy + maxRadius * sin(sweepAngle),
     );
-    final sweepBeamColor = isDark ? const Color(0xFF00E5FF) : const Color(0xFF0284C7);
+    final sweepBeamColor = (trackingSource == TrackingSource.directPhone)
+        ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7))
+        : (isDark ? const Color(0xFFA855F7) : const Color(0xFF9333EA));
 
     final sweepPaint = Paint()
       ..shader = SweepGradient(
@@ -188,9 +180,9 @@ class RadarPainter extends CustomPainter {
     canvas.drawLine(center, sweepEnd, linePaint);
 
     // 5. Center Avatar (Phone or Child Wristband)
-    final centerColor = (trackingSource == TrackingSource.directPhone
-        ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7))
-        : const Color(0xFFA855F7));
+    final centerColor = (trackingSource == TrackingSource.directPhone)
+        ? const Color(0xFF0284C7)
+        : const Color(0xFFA855F7);
 
     final centerGlow = Paint()
       ..color = centerColor.withValues(alpha: isDark ? 0.3 : 0.2)
@@ -202,89 +194,76 @@ class RadarPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, 8, centerDot);
 
-    // 6. Draw Nodes (Fan, Iron, Door at radial bearings: 90°, 210°, 330°)
-    final angles = [
-      -pi / 2,     // Top (Fan)
-      pi / 6,      // Bottom right (Iron)
-      5 * pi / 6,  // Bottom left (Door)
-    ];
+    // Inner bright pip
+    final centerInnerDot = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, 3, centerInnerDot);
 
+    // 6. Draw Nodes strictly as Red, Yellow, Green dots (NO distance labels on radar)
     for (int i = 0; i < nodes.length; i++) {
       final node = nodes[i];
-      final angle = angles[i % angles.length];
+      // Dynamic angle distribution for N nodes
+      final double angle = (nodes.length == 3)
+          ? ([-pi / 2, pi / 6, 5 * pi / 6][i])
+          : ((-pi / 2) + (2 * pi * i / nodes.length));
 
-      final distM = (trackingSource == TrackingSource.directPhone) ? node.directDistanceM : node.wbDistanceM;
-      final state = (trackingSource == TrackingSource.directPhone) ? node.directState : node.wbState;
+      final isDirect = trackingSource == TrackingSource.directPhone;
+      final rssi = isDirect ? (node.directFilteredRssi ?? node.directRawRssi) : node.wbFilteredRssi;
+      final state = isDirect ? node.directState : node.wbState;
 
-      final isOnline = state != NodeState.offline && distM != null;
+      final isOnline = state != NodeState.offline && rssi != null && rssi != ShapnestProtocol.rssiOffline;
 
-      // Position along radius
-      final effectiveDist = isOnline ? distM.clamp(0.15, ShapnestProtocol.distanceMaxM) : ShapnestProtocol.distanceMaxM;
-      final r = (effectiveDist / ShapnestProtocol.distanceMaxM) * maxRadius;
+      // Determine circle ring and dot color strictly based on Red/Yellow/Green zones
+      double targetRadius;
+      Color dotColor;
+      bool isStrongSignal = false;
+
+      if (isOnline) {
+        if (rssi >= node.dangerRssiDbm) { // >= -60 dBm (Red Danger Zone)
+          targetRadius = rRed;
+          dotColor = const Color(0xFFFF1744); // Pure Red Dot
+          isStrongSignal = true;
+        } else if (rssi >= node.warningRssiDbm) { // -60 dBm to -74 dBm (Yellow Zone)
+          targetRadius = rYellow;
+          dotColor = const Color(0xFFFFD600); // Pure Yellow Dot
+        } else { // < -74 dBm (Green Zone)
+          targetRadius = rGreen;
+          dotColor = const Color(0xFF00E676); // Pure Green Dot
+        }
+      } else {
+        targetRadius = rGreen;
+        dotColor = const Color(0xFF94A3B8); // Muted grey if offline
+      }
 
       final nodePos = Offset(
-        center.dx + r * cos(angle),
-        center.dy + r * sin(angle),
+        center.dx + targetRadius * cos(angle),
+        center.dy + targetRadius * sin(angle),
       );
 
-      final isDanger = isOnline && node.isDanger(distM);
-      final markerColor = isDanger
-          ? const Color(0xFFFF1744)
-          : (isOnline ? node.primaryColor : const Color(0xFF94A3B8));
+      final isHazardCritical = isOnline && node.isCriticalHazardAlert(rssi);
 
       // Node Marker Glow
       if (isOnline) {
         final nodeGlow = Paint()
-          ..color = markerColor.withValues(alpha: isDanger ? 0.6 : (isDark ? 0.35 : 0.25))
+          ..color = dotColor.withValues(alpha: isHazardCritical ? 0.7 : (isStrongSignal ? 0.5 : 0.3))
           ..style = PaintingStyle.fill;
-        canvas.drawCircle(nodePos, 14 + (isDanger ? pulseValue * 8 : 0), nodeGlow);
+        canvas.drawCircle(nodePos, 14 + (isStrongSignal ? pulseValue * 8 : 0), nodeGlow);
       }
 
-      // Node Marker Core
+      // Node Marker Core Dot (Pure colored dot)
       final nodeCore = Paint()
-        ..color = markerColor
+        ..color = dotColor
         ..style = PaintingStyle.fill;
       canvas.drawCircle(nodePos, isOnline ? 9 : 6, nodeCore);
 
-      // Node Label & Distance Tag
-      final distStr = isOnline
-          ? (unit == 'm' ? '${distM.toStringAsFixed(2)}m' : '${(distM * 100).toInt()}cm')
-          : 'OFFLINE';
-
-      final tagSpan = TextSpan(
-        children: [
-          TextSpan(
-            text: '${node.name}\n',
-            style: TextStyle(
-              color: isOnline
-                  ? (isDark ? Colors.white : const Color(0xFF0F172A))
-                  : (isDark ? Colors.white54 : const Color(0xFF94A3B8)),
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          TextSpan(
-            text: distStr,
-            style: TextStyle(
-              color: markerColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      );
-      final tagPainter = TextPainter(
-        text: tagSpan,
-        textAlign: TextAlign.center,
-        textDirection: TextDirection.ltr,
-      )..layout();
-
-      // Position text slightly away from center
-      final textOffset = Offset(
-        nodePos.dx - (tagPainter.width / 2),
-        nodePos.dy + (nodePos.dy >= center.dy ? 12 : -tagPainter.height - 12),
-      );
-      tagPainter.paint(canvas, textOffset);
+      // White inner dot for sharp contrast
+      if (isOnline) {
+        final innerDot = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(nodePos, 3, innerDot);
+      }
     }
   }
 

@@ -13,6 +13,7 @@
 
 # Build artifacts & Binaries
 *.apk
+!release/*.apk
 *.aab
 *.exe
 *.o

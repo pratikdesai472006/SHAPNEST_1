@@ -19,6 +19,23 @@ enum NodeState {
   }
 }
 
+enum DoorState {
+  closed,
+  open,
+  unknown;
+
+  String get displayName {
+    switch (this) {
+      case DoorState.closed:
+        return 'CLOSED';
+      case DoorState.open:
+        return 'OPEN';
+      case DoorState.unknown:
+        return 'UNKNOWN';
+    }
+  }
+}
+
 class ShapnestProtocol {
   static const int protocolId = 0x534E; // 'SN'
   static const int protocolIdLe = 0x4E53; // 'NS'
@@ -27,16 +44,25 @@ class ShapnestProtocol {
   static const int frameTypeNodeBeacon = 0x01;
   static const int frameTypeWristbandTel = 0x02;
 
+  // Door Sensor States
+  static const int doorClosed = 0x00;
+  static const int doorOpen = 0x01;
+
+  // Iron Temperature Thresholds
+  static const int ironHotThresholdC = 50; // >= 50°C is considered HOT / Hazard
+  static const int ironWarmThresholdC = 40; // >= 40°C is considered Warm
+  static const int ironDefaultAmbientC = 28; // Default ambient room temperature (28°C)
+
+
   static const int targetWristbandId = 1;
   static const int maxNodes = 3;
   static const int nodeIdMin = 1;
   static const int nodeIdMax = 3;
 
-  // Defaults
   static const int defaultTxPowerDbm = 9;
-  static const int defaultRefRssi1m = -48; // Phone receiver @ 1m (+9 dBm beacon)
-  static const int defaultWbRefRssi1m = -82; // Wristband receiver @ 1m (+9 dBm beacon)
-  static const int defaultPathLossExpX10 = 22; // n = 2.2
+  static const int defaultRefRssi1m = -77;
+  static const int defaultWbRefRssi1m = -77; // Calibrated -77 dBm @ 1m in free space
+  static const int defaultPathLossExpX10 = 16; // n = 1.6 in free space
 
   // Distance bounds
   static const double distanceMinM = 0.15;
@@ -44,10 +70,10 @@ class ShapnestProtocol {
   static const int distanceOfflineCm = 0xFFFF;
   static const int rssiOffline = -128;
 
-  // Staleness timeouts
-  static const Duration nodeActiveTimeout = Duration(milliseconds: 1400);
-  static const Duration nodeOfflineTimeout = Duration(milliseconds: 3500);
-  static const Duration wristbandOfflineTimeout = Duration(milliseconds: 3500);
+  // Staleness timeouts (Optimized for faster reading and offline detection)
+  static const Duration nodeActiveTimeout = Duration(milliseconds: 1000);
+  static const Duration nodeOfflineTimeout = Duration(milliseconds: 2500);
+  static const Duration wristbandOfflineTimeout = Duration(milliseconds: 2000);
 
   static NodeState unpackState(int packedByte) {
     final raw = (packedByte >> 4) & 0x03;
