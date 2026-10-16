@@ -276,6 +276,7 @@ class BleService extends ChangeNotifier {
         node.directRawRssi = rawRssi;
         node.directLastSeen = now;
         node.directState = NodeState.active;
+        alertService.setNodeOnline(nodeId, node.name);
 
         // Adopt over-the-air broadcasted calibration unless user calibrated manually on phone
         // Ignore legacy -59 dBm firmware constant so calibrated -80 dBm remains intact
@@ -395,9 +396,9 @@ class BleService extends ChangeNotifier {
         }
 
         if (wasOffline || parsed.sequence % 4 == 0) {
-          final d1 = nodes[0].wbDistanceM != null ? '${nodes[0].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[0].wbState == NodeState.offline ? 'OFF' : '——');
-          final d2 = nodes[1].wbDistanceM != null ? '${nodes[1].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[1].wbState == NodeState.offline ? 'OFF' : '——');
-          final d3 = nodes[2].wbDistanceM != null ? '${nodes[2].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[2].wbState == NodeState.offline ? 'OFF' : '——');
+          final d1 = nodes[0].wbFilteredRssi != null ? '${nodes[0].wbFilteredRssi}dBm (${nodes[0].getProximityLabel(nodes[0].wbFilteredRssi)})' : (nodes[0].wbState == NodeState.offline ? 'OFF' : '——');
+          final d2 = nodes[1].wbFilteredRssi != null ? '${nodes[1].wbFilteredRssi}dBm (${nodes[1].getProximityLabel(nodes[1].wbFilteredRssi)})' : (nodes[1].wbState == NodeState.offline ? 'OFF' : '——');
+          final d3 = nodes[2].wbFilteredRssi != null ? '${nodes[2].wbFilteredRssi}dBm (${nodes[2].getProximityLabel(nodes[2].wbFilteredRssi)})' : (nodes[2].wbState == NodeState.offline ? 'OFF' : '——');
           _addLog('# [WRISTBAND] WB#${parsed.wristbandId} (Seq #${parsed.sequence}) ⟷ Fan: $d1 | Iron: $d2 | Door: $d3');
         }
       }
@@ -420,6 +421,7 @@ class BleService extends ChangeNotifier {
             node.wbDistanceM = null;
             node.wbFilteredRssi = null;
             distanceEngine.clearWbDistance(node.id);
+            alertService.handleNodeOffline(node.id, node.name);
           }
           _addLog('# [WARN] Child Wristband LOST (> ${ShapnestProtocol.wristbandOfflineTimeout.inMilliseconds}ms silence).');
         }
@@ -450,6 +452,15 @@ class BleService extends ChangeNotifier {
         } else if (age > ShapnestProtocol.nodeActiveTimeout) {
           node.wbState = NodeState.stale;
         }
+      }
+
+      // Check offline transition for active tracking source
+      final isNodeOffline = (trackingSource == TrackingSource.wristband)
+          ? (node.wbState == NodeState.offline)
+          : (node.directState == NodeState.offline);
+
+      if (isNodeOffline) {
+        alertService.handleNodeOffline(node.id, node.name);
       }
 
       // Reset sensor state only when both direct link and wristband telemetry are offline

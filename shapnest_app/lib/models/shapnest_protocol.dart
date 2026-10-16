@@ -59,6 +59,14 @@ class ShapnestProtocol {
   static const int nodeIdMin = 1;
   static const int nodeIdMax = 3;
 
+  // RSSI Proximity Zones & Hysteresis Thresholds (Configurable defaults)
+  static const int defaultRedZoneEntryRssiDbm = -60;   // Very Near / Red Zone entry threshold
+  static const int defaultRedZoneExitRssiDbm = -63;    // Exit Red Zone (3 dB hysteresis)
+  static const int defaultYellowZoneEntryRssiDbm = -74; // Near / Yellow Zone entry threshold
+  static const int defaultYellowZoneExitRssiDbm = -77;  // Exit Yellow Zone (3 dB hysteresis)
+  static const int rssiHysteresisMarginDbm = 3;        // 3 dB hysteresis to prevent boundary flutter
+  static const int defaultZoneConfirmationSamples = 2;  // Consecutive samples required for confirmed zone transition
+
   static const int defaultTxPowerDbm = 9;
   static const int defaultRefRssi1m = -77;
   static const int defaultWbRefRssi1m = -77; // Calibrated -77 dBm @ 1m in free space

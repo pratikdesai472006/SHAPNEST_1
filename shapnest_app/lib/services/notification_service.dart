@@ -97,6 +97,30 @@ class NotificationService {
     }
   }
 
+  /// In-memory log of sent notifications for testing and inspection
+  final List<Map<String, dynamic>> sentNotifications = [];
+  bool enableRateLimiting = true;
+
+  /// Reset notification history and rate limiting for testing
+  void resetForTesting() {
+    _lastNotificationTime.clear();
+    sentNotifications.clear();
+    enableRateLimiting = false;
+  }
+
+  /// Post a node disconnection notification
+  Future<void> showOfflineNotification({
+    required int id,
+    required String nodeName,
+  }) async {
+    await showHazardNotification(
+      id: id + 100, // separate ID partition from proximity alerts
+      title: 'Node Disconnected',
+      body: 'Warning: The ${nodeName.toLowerCase()} node has disconnected.',
+      isCritical: false,
+    );
+  }
+
   /// Post a heads-up system/device notification
   Future<void> showHazardNotification({
     required int id,
@@ -104,14 +128,24 @@ class NotificationService {
     required String body,
     bool isCritical = true,
   }) async {
+    final now = DateTime.now();
+
+    // Log notification call
+    sentNotifications.add({
+      'id': id,
+      'title': title,
+      'body': body,
+      'isCritical': isCritical,
+      'timestamp': now,
+    });
+
     if (!_isInitialized) {
       await initialize();
     }
 
-    final now = DateTime.now();
     final lastTime = _lastNotificationTime[id];
     // Rate limit per node: minimum 10 seconds between notifications to avoid spamming the OS
-    if (lastTime != null && now.difference(lastTime).inSeconds < 10) {
+    if (enableRateLimiting && lastTime != null && now.difference(lastTime).inSeconds < 10) {
       return;
     }
     _lastNotificationTime[id] = now;

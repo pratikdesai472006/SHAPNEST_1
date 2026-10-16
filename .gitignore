@@ -20,9 +20,15 @@
 *.bin
 *.elf
 
-# Screenshots & Temporary Debug Images
+# Screenshots & Temporary Debug Images & Logs
+/*.png
 screen*.png
 phone_screen.png
+logcat*.txt
+*.log
+
+# Kotlin sessions
+**/.kotlin/
 
 # IDE & Editor
 .idea/

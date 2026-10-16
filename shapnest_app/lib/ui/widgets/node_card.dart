@@ -35,15 +35,10 @@ class NodeCard extends StatelessWidget {
 
     final isOnline = state != NodeState.offline && rssi != null && rssi != ShapnestProtocol.rssiOffline;
     final signalZone = (isOnline) ? node.getSignalZone(rssi) : null;
-    final isHazardFulfilled = node.isHazardConditionFulfilled;
 
-    // Safety Alert States (Signal strength based + Condition gated):
-    // 1. Critical Red Alert: Strong signal (>= -60 dBm) AND hazard active (Fan ON, Iron HOT, Door OPEN)
-    final isCriticalAlert = isOnline && (signalZone == ProximityZone.danger) && isHazardFulfilled;
-    // 2. Child near, but hazard condition is inactive (Fan OFF, Iron COOL, Door CLOSED) -> "otherwise nothing to do"
-    final isNearInactive = isOnline && (signalZone == ProximityZone.danger) && !isHazardFulfilled;
-    // 3. Warning Yellow Alert: Moderate signal (-60 to -74 dBm) AND hazard active
-    final isWarningAlert = isOnline && (signalZone == ProximityZone.warning) && isHazardFulfilled;
+    // Safety Alert States: Red Zone proximity alone triggers urgent alert & loud alarm
+    final isCriticalAlert = isOnline && (signalZone == ProximityZone.danger);
+    final isWarningAlert = isOnline && (signalZone == ProximityZone.warning);
 
     // Dynamic Card Border & Background Colors
     final cardBg = isDark ? const Color(0xFF1E293B) : Colors.white;
@@ -51,11 +46,9 @@ class NodeCard extends StatelessWidget {
         ? const Color(0xFFFF1744)
         : (isWarningAlert
             ? const Color(0xFFFFD600)
-            : (isNearInactive
-                ? (isDark ? const Color(0xFF00B4D8) : const Color(0xFF0284C7))
-                : (isOnline
-                    ? (isDark ? node.primaryColor.withValues(alpha: 0.5) : node.primaryColor.withValues(alpha: 0.6))
-                    : (isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)))));
+            : (isOnline
+                ? (isDark ? node.primaryColor.withValues(alpha: 0.5) : node.primaryColor.withValues(alpha: 0.6))
+                : (isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0))));
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -64,7 +57,7 @@ class NodeCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: borderColor,
-          width: isCriticalAlert ? 2.0 : (isWarningAlert || isNearInactive ? 1.5 : 1.2),
+          width: isCriticalAlert ? 2.0 : (isWarningAlert ? 1.5 : 1.2),
         ),
         boxShadow: [
           BoxShadow(
@@ -82,7 +75,7 @@ class NodeCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // 1. Critical Red Danger Alert Ribbon (Child Near & Hazard Condition Fulfilled)
+          // 1. Critical Red Danger Alert Ribbon (Child Very Near Node)
           if (isCriticalAlert)
             Container(
               width: double.infinity,
@@ -100,7 +93,7 @@ class NodeCard extends StatelessWidget {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'CRITICAL HAZARD: Child Near & ${node.hazardDescription.toUpperCase()}!',
+                      'URGENT: Your child is very near the ${node.name.toLowerCase()}!',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10.5,
@@ -114,39 +107,7 @@ class NodeCard extends StatelessWidget {
               ),
             ),
 
-          // 2. Reassuring Inactive Hazard Ribbon (Child Near, but Hazard Condition is OFF / Inactive)
-          if (isNearInactive)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00B4D8).withValues(alpha: 0.9),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(18),
-                  topRight: Radius.circular(18),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.check_circle_outline_rounded, color: Colors.white, size: 16),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'CHILD NEAR ($rssi dBm), BUT ${node.name.toUpperCase()} IS SAFE (${node.id == 1 ? "OFF" : (node.id == 2 ? "COOL" : "CLOSED")}) — NO ALARM',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.4,
-                      ),
-                      softWrap: true,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          // 3. Yellow Caution Warning Ribbon
+          // 2. Yellow Caution Warning Ribbon
           if (isWarningAlert)
             Container(
               width: double.infinity,
@@ -164,7 +125,7 @@ class NodeCard extends StatelessWidget {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'YELLOW WARNING ZONE: Child Approaching & ${node.hazardDescription}!',
+                      'WARNING: Your child is near the ${node.name.toLowerCase()}.',
                       style: const TextStyle(
                         color: Colors.black,
                         fontSize: 10,
@@ -363,7 +324,7 @@ class NodeCard extends StatelessWidget {
                       ),
                     ),
 
-                    // Signal Quality & Secondary Distance Readout
+                    // Signal Quality & Proximity Level Readout (Safe / Near / Very Near)
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -373,21 +334,24 @@ class NodeCard extends StatelessWidget {
                             _buildSignalBars(rssi, isDark),
                             const SizedBox(width: 8),
                             Text(
-                              isOnline && distM != null
-                                  ? (unit == 'm' ? '${distM.toStringAsFixed(2)}m' : '${(distM * 100).round()}cm')
-                                  : '——',
+                              isOnline
+                                  ? node.getProximityLabel(rssi)
+                                  : 'Offline',
                               style: TextStyle(
-                                color: theme.colorScheme.onSurface,
+                                color: isCriticalAlert
+                                    ? const Color(0xFFFF1744)
+                                    : (isWarningAlert
+                                        ? const Color(0xFFFFD600)
+                                        : (isOnline ? const Color(0xFF00E676) : theme.colorScheme.onSurfaceVariant)),
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                fontFamily: 'monospace',
                               ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Estimated Dist',
+                          'Proximity Level',
                           style: TextStyle(
                             color: theme.colorScheme.onSurfaceVariant,
                             fontSize: 10,
@@ -1012,7 +976,7 @@ class NodeCard extends StatelessWidget {
             ),
             Text(
               rssi != null
-                  ? '$rssi dBm ${distM != null ? "• ${(unit == 'm' ? '${distM.toStringAsFixed(2)}m' : '${(distM * 100).toInt()}cm')}" : ""}'
+                  ? '$rssi dBm • ${node.getProximityLabel(rssi)}'
                   : '——',
               style: TextStyle(
                 color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),

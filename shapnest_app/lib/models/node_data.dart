@@ -153,10 +153,29 @@ class NodeData {
     }
   }
 
-  /// True ONLY when signal strength is in Red Zone AND hazard condition is fulfilled!
-  /// "otherwise nothing to do"
+  /// Exit thresholds with hysteresis margin (default 3 dBm)
+  int get dangerExitRssiDbm => dangerRssiDbm - ShapnestProtocol.rssiHysteresisMarginDbm;
+  int get warningExitRssiDbm => warningRssiDbm - ShapnestProtocol.rssiHysteresisMarginDbm;
+
+  /// Returns understandable proximity label based on signal strength:
+  /// - 'Very Near' (Red Zone >= dangerRssiDbm)
+  /// - 'Near' (Yellow Zone dangerRssiDbm..warningRssiDbm)
+  /// - 'Safe' (Green Zone < warningRssiDbm)
+  /// - 'Offline' (null / no signal)
+  String getProximityLabel(int? rssi) {
+    if (rssi == null || rssi == ShapnestProtocol.rssiOffline) return 'Offline';
+    if (rssi >= dangerRssiDbm) {
+      return 'Very Near';
+    } else if (rssi >= warningRssiDbm) {
+      return 'Near';
+    } else {
+      return 'Safe';
+    }
+  }
+
+  /// True when signal strength is in Red Zone (proximity alert)
   bool isCriticalHazardAlert(int? rssi) {
-    return isSignalDanger(rssi) && isHazardConditionFulfilled;
+    return isSignalDanger(rssi);
   }
 
   /// Check whether the node is currently in the dangerous zone (< dangerDistanceM)
