@@ -318,6 +318,23 @@ class BleService extends ChangeNotifier {
         node.directFilteredRssi = distRes.filteredRssi;
         node.directMotionState = distRes.motionState;
 
+        // In direct phone tracking mode, process proximity alerts for anchor nodes
+        if (trackingSource == TrackingSource.directPhone) {
+          alertService.processWristbandTelemetry(
+            nodeId: node.id,
+            nodeName: node.name,
+            rssi: node.directFilteredRssi ?? node.directRawRssi,
+            isNodeOnline: true,
+            isHazardActive: node.isHazardConditionFulfilled,
+            hazardDescription: node.hazardDescription,
+            distanceM: node.directDistanceM,
+            dangerRssiDbm: node.dangerRssiDbm,
+            warningRssiDbm: node.warningRssiDbm,
+            dangerDistanceM: node.dangerDistanceM,
+            warningDistanceM: node.warningDistanceM,
+          );
+        }
+
         // Check if Calibration Wizard is actively recording this node
         if (activeCalibration != null && activeCalibration!.nodeId == nodeId && !activeCalibration!.isCompleted) {
           activeCalibration!.collectedRssi.add(rawRssi);
@@ -333,20 +350,28 @@ class BleService extends ChangeNotifier {
         isWristbandOnline = true;
         wristbandSequence = parsed.sequence;
         lastWristbandSeen = now;
+        alertService.handleWristbandOnline();
 
         for (final block in parsed.nodes) {
           final nodeIndex = nodes.indexWhere((n) => n.id == block.nodeId);
           if (nodeIndex == -1) continue;
 
           final node = nodes[nodeIndex];
-          node.wbState = block.state;
-          node.wbFilteredRssi = block.filteredRssi;
           node.wbLastSeen = now;
 
           if (block.state == NodeState.offline) {
+            node.wbState = NodeState.offline;
             node.wbDistanceM = null;
+            node.wbFilteredRssi = null; // Clear stale RSSI
             distanceEngine.clearWbDistance(block.nodeId);
+            if (trackingSource == TrackingSource.wristband) {
+              alertService.handleNodeOffline(node.id, node.name);
+            }
           } else {
+            node.wbState = block.state;
+            node.wbFilteredRssi = block.filteredRssi;
+            alertService.setNodeOnline(node.id, node.name);
+
             // Consistent distance processing using phone's calibrated Dual-Regime Kalman Distance Engine
             if (block.filteredRssi != ShapnestProtocol.rssiOffline &&
                 block.filteredRssi >= -105 &&
@@ -365,26 +390,30 @@ class BleService extends ChangeNotifier {
                 incomingDistanceM: block.distanceM!,
               );
             }
-          }
 
-          // Safety Alert Engine: evaluates signal strength (Red >= -60 dBm) & active hazard condition
-          alertService.processWristbandTelemetry(
-            nodeId: node.id,
-            nodeName: node.name,
-            rssi: node.wbFilteredRssi,
-            isHazardActive: node.isHazardConditionFulfilled,
-            hazardDescription: node.hazardDescription,
-            distanceM: node.wbDistanceM,
-            dangerRssiDbm: node.dangerRssiDbm,
-            warningRssiDbm: node.warningRssiDbm,
-            dangerDistanceM: node.dangerDistanceM,
-            warningDistanceM: node.warningDistanceM,
-          );
+            // Safety Alert Engine: evaluates signal strength (Red >= -60 dBm) & active hazard condition
+            if (trackingSource == TrackingSource.wristband) {
+              alertService.processWristbandTelemetry(
+                nodeId: node.id,
+                nodeName: node.name,
+                rssi: node.wbFilteredRssi,
+                isNodeOnline: true,
+                isHazardActive: node.isHazardConditionFulfilled,
+                hazardDescription: node.hazardDescription,
+                distanceM: node.wbDistanceM,
+                dangerRssiDbm: node.dangerRssiDbm,
+                warningRssiDbm: node.warningRssiDbm,
+                dangerDistanceM: node.dangerDistanceM,
+                warningDistanceM: node.warningDistanceM,
+              );
+            }
+          }
 
           // Collect wristband calibration samples when Calibration Wizard is running
           if (activeCalibration != null &&
               activeCalibration!.nodeId == block.nodeId &&
               !activeCalibration!.isCompleted &&
+              block.state != NodeState.offline &&
               block.filteredRssi != ShapnestProtocol.rssiOffline &&
               block.filteredRssi >= -105 &&
               block.filteredRssi <= -15) {
@@ -416,10 +445,11 @@ class BleService extends ChangeNotifier {
       if (wbAge > ShapnestProtocol.wristbandOfflineTimeout) {
         if (isWristbandOnline) {
           isWristbandOnline = false;
+          alertService.handleWristbandOffline(); // Case B: Send exactly 1 "Warning: Child wristband disconnected."
           for (final node in nodes) {
             node.wbState = NodeState.offline;
             node.wbDistanceM = null;
-            node.wbFilteredRssi = null;
+            node.wbFilteredRssi = null; // Clear stale RSSI
             distanceEngine.clearWbDistance(node.id);
             alertService.handleNodeOffline(node.id, node.name);
           }
@@ -433,10 +463,16 @@ class BleService extends ChangeNotifier {
       if (node.directLastSeen != null) {
         final age = now.difference(node.directLastSeen!);
         if (age > ShapnestProtocol.nodeOfflineTimeout) {
-          node.directState = NodeState.offline;
-          node.directDistanceM = null;
-          node.directFilteredRssi = null;
-          node.directRawRssi = null;
+          if (node.directState != NodeState.offline) {
+            node.directState = NodeState.offline;
+            node.directDistanceM = null;
+            node.directFilteredRssi = null;
+            node.directRawRssi = null;
+            distanceEngine.resetFilter(node.id);
+            if (trackingSource == TrackingSource.directPhone) {
+              alertService.handleNodeOffline(node.id, node.name);
+            }
+          }
         } else if (age > ShapnestProtocol.nodeActiveTimeout) {
           node.directState = NodeState.stale;
         }
@@ -445,22 +481,18 @@ class BleService extends ChangeNotifier {
       if (node.wbLastSeen != null) {
         final age = now.difference(node.wbLastSeen!);
         if (age > ShapnestProtocol.nodeOfflineTimeout) {
-          node.wbState = NodeState.offline;
-          node.wbDistanceM = null;
-          node.wbFilteredRssi = null;
-          distanceEngine.clearWbDistance(node.id);
+          if (node.wbState != NodeState.offline) {
+            node.wbState = NodeState.offline;
+            node.wbDistanceM = null;
+            node.wbFilteredRssi = null;
+            distanceEngine.clearWbDistance(node.id);
+            if (trackingSource == TrackingSource.wristband) {
+              alertService.handleNodeOffline(node.id, node.name);
+            }
+          }
         } else if (age > ShapnestProtocol.nodeActiveTimeout) {
           node.wbState = NodeState.stale;
         }
-      }
-
-      // Check offline transition for active tracking source
-      final isNodeOffline = (trackingSource == TrackingSource.wristband)
-          ? (node.wbState == NodeState.offline)
-          : (node.directState == NodeState.offline);
-
-      if (isNodeOffline) {
-        alertService.handleNodeOffline(node.id, node.name);
       }
 
       // Reset sensor state only when both direct link and wristband telemetry are offline

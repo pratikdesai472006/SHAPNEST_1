@@ -18,8 +18,10 @@ class NotificationService {
   static const String channelDesc =
       'Real-time proximity warnings when child is near dangerous appliances';
 
+  bool isTestMode = false;
+
   Future<void> initialize() async {
-    if (_isInitialized) return;
+    if (_isInitialized || isTestMode) return;
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const darwinSettings = DarwinInitializationSettings(
@@ -106,6 +108,7 @@ class NotificationService {
     _lastNotificationTime.clear();
     sentNotifications.clear();
     enableRateLimiting = false;
+    isTestMode = true;
   }
 
   /// Post a node disconnection notification
@@ -117,6 +120,16 @@ class NotificationService {
       id: id + 100, // separate ID partition from proximity alerts
       title: 'Node Disconnected',
       body: 'Warning: The ${nodeName.toLowerCase()} node has disconnected.',
+      isCritical: false,
+    );
+  }
+
+  /// Post a child wristband disconnection notification
+  Future<void> showWristbandOfflineNotification() async {
+    await showHazardNotification(
+      id: 999, // Distinct ID for wristband
+      title: 'Wristband Disconnected',
+      body: 'Warning: Child wristband disconnected.',
       isCritical: false,
     );
   }
@@ -138,6 +151,11 @@ class NotificationService {
       'isCritical': isCritical,
       'timestamp': now,
     });
+
+    // In test mode, record notification in sentNotifications and exit cleanly
+    if (isTestMode) {
+      return;
+    }
 
     if (!_isInitialized) {
       await initialize();

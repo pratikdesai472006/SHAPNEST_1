@@ -50,6 +50,7 @@ class ProtocolParser {
     final adv = result.advertisementData;
     final mfrDataMap = adv.manufacturerData;
     final devName = adv.advName.isNotEmpty ? adv.advName : result.device.platformName;
+    final isShapnestDevice = devName.contains('SHAPNEST') || devName.contains('WB1');
 
     // Check all manufacturer data entries
     for (final entry in mfrDataMap.entries) {
@@ -72,12 +73,14 @@ class ProtocolParser {
         }
       }
 
-      // Case 3: Direct structural parse (handles OEM stacks that remap company ID)
-      final directParsed = _parsePayloadBytes(rawBytes, devName);
-      if (directParsed != null) return directParsed;
+      // Case 3: Only parse without company ID IF the device name explicitly identifies as SHAPNEST
+      if (isShapnestDevice) {
+        final directParsed = _parsePayloadBytes(rawBytes, devName);
+        if (directParsed != null) return directParsed;
+      }
     }
 
-    // Fallback: check device name pattern (e.g. "SHAPNEST_N1", "SHAPNEST_WB1", "WB1")
+    // Fallback: check device name pattern (e.g. "SHAPNEST_N1", "SHAPNEST_N2", "SHAPNEST_N3")
     if (devName.startsWith('SHAPNEST_N')) {
       final idChar = devName.replaceAll('SHAPNEST_N', '').trim();
       final id = int.tryParse(idChar);
@@ -88,14 +91,6 @@ class ProtocolParser {
           pathLossExpN: 2.2,
           sequence: 0,
         );
-      }
-    }
-
-    // Fallback for Wristband by device name
-    if (devName.contains('SHAPNEST_WB') || devName.contains('WB1')) {
-      for (final rawBytes in mfrDataMap.values) {
-        final parsed = _parsePayloadBytes(rawBytes, devName);
-        if (parsed is ParsedWristbandTelemetry) return parsed;
       }
     }
 
@@ -149,8 +144,12 @@ class ProtocolParser {
     //   filtered_rssi (1 byte int8)
     if (frameType == ShapnestProtocol.frameTypeWristbandTel && bytes.length >= 4) {
       final wbId = bytes[1];
+      if (wbId != ShapnestProtocol.targetWristbandId) return null;
+
       final seq = bytes[2];
       final nodeCount = bytes[3];
+      if (nodeCount < 1 || nodeCount > ShapnestProtocol.maxNodes) return null;
+      if (bytes.length < 4 + (nodeCount * 4)) return null;
 
       final List<ParsedWristbandNodeBlock> parsedBlocks = [];
       int offset = 4;

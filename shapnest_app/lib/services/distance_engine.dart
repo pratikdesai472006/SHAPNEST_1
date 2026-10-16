@@ -357,6 +357,15 @@ class DistanceEngine {
     _displayedWbDistances.remove(nodeId);
     _smoothWbDistances.remove(nodeId);
     _wbBreachCounts.remove(nodeId);
+
+    final wbKey = nodeId + 100;
+    _kalmanFilters[wbKey]?.reset();
+    _sampleBuffers[wbKey]?.clear();
+    _displayedDistances.remove(wbKey);
+    _smoothDistances.remove(wbKey);
+    _deadbandBreachCounts.remove(wbKey);
+    _lastCalculatedDistances.remove(wbKey);
+    _lastCalculationTimes.remove(wbKey);
   }
 
   void resetFilter(int nodeId) {
@@ -370,6 +379,15 @@ class DistanceEngine {
     _wbBreachCounts.remove(nodeId);
     _lastCalculatedDistances.remove(nodeId);
     _lastCalculationTimes.remove(nodeId);
+
+    final wbKey = nodeId + 100;
+    _kalmanFilters[wbKey]?.reset();
+    _sampleBuffers[wbKey]?.clear();
+    _displayedDistances.remove(wbKey);
+    _smoothDistances.remove(wbKey);
+    _deadbandBreachCounts.remove(wbKey);
+    _lastCalculatedDistances.remove(wbKey);
+    _lastCalculationTimes.remove(wbKey);
   }
 }
 
