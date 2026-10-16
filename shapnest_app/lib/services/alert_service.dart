@@ -53,6 +53,11 @@ class AlertService extends ChangeNotifier {
   final Map<int, bool> _hasNotifiedOffline = {};
   final Map<int, bool> _isOnline = {};
 
+  // Child Wristband Connection Lifecycle Tracking
+  bool _hasWristbandEverConnected = false;
+  bool _isWristbandOnline = false;
+  bool _hasNotifiedWristbandOffline = false;
+
   SafetyAlertMessage? _currentActiveAlert;
   final List<SafetyAlertMessage> _alertLog = [];
 
@@ -62,6 +67,7 @@ class AlertService extends ChangeNotifier {
   int normalNotificationCount = 0;
   int urgentNotificationCount = 0;
   int offlineNotificationCount = 0;
+  int wristbandOfflineNotificationCount = 0;
 
   SafetyAlertMessage? get currentActiveAlert => _currentActiveAlert;
   List<SafetyAlertMessage> get alertLog => List.unmodifiable(_alertLog);
@@ -70,6 +76,37 @@ class AlertService extends ChangeNotifier {
       _confirmedZone[nodeId] ?? ProximityZone.safe;
 
   bool isNodeOnline(int nodeId) => _isOnline[nodeId] ?? false;
+  bool get isWristbandOnline => _isWristbandOnline;
+  bool get hasWristbandEverConnected => _hasWristbandEverConnected;
+
+  /// Mark wristband online on valid telemetry arrival (re-arms disconnection alerts)
+  void handleWristbandOnline() {
+    _hasWristbandEverConnected = true;
+    _isWristbandOnline = true;
+    _hasNotifiedWristbandOffline = false;
+    notifyListeners();
+  }
+
+  /// Mark wristband offline after confirmed silence timeout
+  /// - Case A: Never connected -> Not connected / Offline without spam notification
+  /// - Case B: Was online, now offline -> Exactly ONE notification: "Warning: Child wristband disconnected."
+  void handleWristbandOffline() {
+    if (!_hasWristbandEverConnected) {
+      _isWristbandOnline = false;
+      return;
+    }
+
+    if (_isWristbandOnline && !_hasNotifiedWristbandOffline) {
+      _isWristbandOnline = false;
+      _hasNotifiedWristbandOffline = true;
+      wristbandOfflineNotificationCount++;
+
+      NotificationService().showWristbandOfflineNotification();
+      notifyListeners();
+    } else {
+      _isWristbandOnline = false;
+    }
+  }
 
   /// Dismiss the current active alert banner
   void dismissActiveAlert() {
@@ -85,6 +122,9 @@ class AlertService extends ChangeNotifier {
     _lastAlertedZone.clear();
     _hasNotifiedOffline.clear();
     _isOnline.clear();
+    _hasWristbandEverConnected = false;
+    _isWristbandOnline = false;
+    _hasNotifiedWristbandOffline = false;
     _currentActiveAlert = null;
     _alertLog.clear();
     loudAlarmTriggerCount = 0;
@@ -92,6 +132,7 @@ class AlertService extends ChangeNotifier {
     normalNotificationCount = 0;
     urgentNotificationCount = 0;
     offlineNotificationCount = 0;
+    wristbandOfflineNotificationCount = 0;
     confirmationSamples = ShapnestProtocol.defaultZoneConfirmationSamples;
     hysteresisMarginDbm = ShapnestProtocol.rssiHysteresisMarginDbm;
   }
@@ -121,14 +162,24 @@ class AlertService extends ChangeNotifier {
     double? distanceM,
     bool isHazardActive = true,
     String hazardDescription = '',
+    bool isNodeOnline = true,
     int dangerRssiDbm = ShapnestProtocol.defaultRedZoneEntryRssiDbm, // -60
     int warningRssiDbm = ShapnestProtocol.defaultYellowZoneEntryRssiDbm, // -74
     double dangerDistanceM = 0.30,
     double warningDistanceM = 0.70,
     String unit = 'm',
   }) {
-    // 1. Handle missing/invalid RSSI readings safely
+    // 0. A node that is offline must NEVER produce a proximity alert
+    if (!isNodeOnline) {
+      _candidateZone[nodeId] = null;
+      _candidateCount[nodeId] = 0;
+      return;
+    }
+
+    // 1. Handle missing/invalid/zero RSSI readings safely
+    // Zero, null, out-of-range, or sentinel offline values must NEVER trigger an alert
     if (rssi == null ||
+        rssi == 0 ||
         rssi == ShapnestProtocol.rssiOffline ||
         rssi < -105 ||
         rssi > -15) {
@@ -326,17 +377,19 @@ class AlertService extends ChangeNotifier {
       );
     }
 
-    // Ensure a confirmed disconnection cannot silently leave an old Red Zone state active forever
+    // Ensure a confirmed disconnection resets all proximity states and pending confirmations
     _confirmedZone[nodeId] = ProximityZone.safe;
     _candidateZone[nodeId] = null;
     _candidateCount[nodeId] = 0;
-    _lastAlertedZone[nodeId] = null;
+    _lastAlertedZone[nodeId] = ProximityZone.safe;
 
     if (_currentActiveAlert?.nodeId == nodeId) {
       _currentActiveAlert = null;
     }
 
-    notifyListeners();
+    if (wasOnline) {
+      notifyListeners();
+    }
   }
 
   /// Mark node online when valid telemetry packets resume.

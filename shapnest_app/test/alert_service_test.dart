@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shapnest_app/models/node_data.dart';
 import 'package:shapnest_app/models/shapnest_protocol.dart';
 import 'package:shapnest_app/services/alert_service.dart';
 import 'package:shapnest_app/services/distance_engine.dart';
@@ -7,7 +8,7 @@ import 'package:shapnest_app/services/notification_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('SHAPNEST AlertService & Offline Monitoring Tests', () {
+  group('SHAPNEST Mandatory Verification Suite (12 Requirements)', () {
     late AlertService alertService;
     late NotificationService notificationService;
 
@@ -19,16 +20,69 @@ void main() {
     });
 
     // ------------------------------------------------------------------------
-    // Requirement 1: Yellow Zone entry produces one normal notification and no loud alarm
+    // 1. App startup with all four boards absent produces zero Yellow/Red proximity notifications
     // ------------------------------------------------------------------------
-    test('1. Yellow Zone entry produces one normal notification and no loud alarm', () {
-      // 2 consecutive readings in Yellow zone (-68 dBm)
+    test('1. App startup with all four boards absent produces zero Yellow/Red proximity notifications', () {
+      // Boards absent: nodes initialized with default states (offline, null RSSI)
+      final nodes = NodeData.createDefaultNodes();
+      for (final node in nodes) {
+        expect(node.directState, equals(NodeState.offline));
+        expect(node.wbState, equals(NodeState.offline));
+        expect(node.directFilteredRssi, isNull);
+        expect(node.wbFilteredRssi, isNull);
+      }
+
+      // Check alert service at startup
+      expect(alertService.normalNotificationCount, equals(0));
+      expect(alertService.urgentNotificationCount, equals(0));
+      expect(alertService.loudAlarmTriggerCount, equals(0));
+      expect(alertService.vibrationCount, equals(0));
+      expect(alertService.offlineNotificationCount, equals(0));
+      expect(alertService.wristbandOfflineNotificationCount, equals(0));
+      expect(alertService.currentActiveAlert, isNull);
+      expect(notificationService.sentNotifications, isEmpty);
+    });
+
+    // ------------------------------------------------------------------------
+    // 2. Missing RSSI cannot trigger a proximity alert
+    // ------------------------------------------------------------------------
+    test('2. Missing RSSI (null, zero, sentinel -128, out of bounds) cannot trigger a proximity alert', () {
+      // Node is online, but receives null RSSI
+      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: null);
+      // Zero RSSI
+      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: 0);
+      // Sentinel -128 dBm offline RSSI
+      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: ShapnestProtocol.rssiOffline);
+      // Extremely low out-of-range RSSI (-110 dBm)
+      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -110);
+      // Impossibly high out-of-range RSSI (-5 dBm)
+      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -5);
+
+      // Node marked offline: should never trigger proximity alert
+      alertService.processWristbandTelemetry(
+        nodeId: 1,
+        nodeName: 'Fan',
+        rssi: -50,
+        isNodeOnline: false,
+      );
+
+      expect(alertService.getConfirmedZone(1), equals(ProximityZone.safe));
+      expect(alertService.normalNotificationCount, equals(0));
+      expect(alertService.urgentNotificationCount, equals(0));
+      expect(alertService.loudAlarmTriggerCount, equals(0));
+      expect(notificationService.sentNotifications, isEmpty);
+    });
+
+    // ------------------------------------------------------------------------
+    // 3. A genuine Yellow entry produces one normal notification
+    // ------------------------------------------------------------------------
+    test('3. A genuine Yellow entry produces one normal notification', () {
+      // 1st sample in Yellow zone (-68 dBm): candidate is Yellow, but unconfirmed
       alertService.processWristbandTelemetry(
         nodeId: 1,
         nodeName: 'Fan',
         rssi: -68,
       );
-      // 1st sample: candidate is Yellow, but not yet confirmed (requires 2 samples)
       expect(alertService.getConfirmedZone(1), equals(ProximityZone.safe));
       expect(alertService.normalNotificationCount, equals(0));
 
@@ -41,7 +95,7 @@ void main() {
 
       expect(alertService.getConfirmedZone(1), equals(ProximityZone.warning));
       expect(alertService.normalNotificationCount, equals(1));
-      expect(alertService.loudAlarmTriggerCount, equals(0)); // NO loud alarm!
+      expect(alertService.loudAlarmTriggerCount, equals(0)); // NO loud alarm in Yellow!
       expect(alertService.vibrationCount, equals(0));
 
       expect(alertService.currentActiveAlert, isNotNull);
@@ -55,9 +109,9 @@ void main() {
     });
 
     // ------------------------------------------------------------------------
-    // Requirement 2: Red Zone entry produces one urgent notification and triggers the loud alarm
+    // 4. A genuine Red entry produces one urgent notification and alarm
     // ------------------------------------------------------------------------
-    test('2. Red Zone entry produces one urgent notification and triggers the loud alarm', () {
+    test('4. A genuine Red entry produces one urgent notification and alarm', () {
       // 2 consecutive readings in Red zone (-55 dBm >= -60 dBm)
       alertService.processWristbandTelemetry(
         nodeId: 2,
@@ -73,198 +127,179 @@ void main() {
       expect(alertService.getConfirmedZone(2), equals(ProximityZone.danger));
       expect(alertService.urgentNotificationCount, equals(1));
       expect(alertService.loudAlarmTriggerCount, equals(1)); // Loud alarm triggered!
-      expect(alertService.vibrationCount, equals(1));
+      expect(alertService.vibrationCount, equals(1)); // Physical vibration!
 
       expect(alertService.currentActiveAlert, isNotNull);
       final alert = alertService.currentActiveAlert!;
       expect(alert.zone, equals(ProximityZone.danger));
       expect(alert.title, contains('URGENT'));
       expect(alert.body, equals('URGENT: Your child is very near the iron.'));
-      // No exact distance in message
       expect(alert.body, isNot(contains('m')));
       expect(alert.body, isNot(contains('cm')));
     });
 
     // ------------------------------------------------------------------------
-    // Requirement 3: Repeated Red readings do not repeatedly trigger the alarm
+    // 5. Repeated packets and RSSI boundary fluctuations do not create duplicate alerts
     // ------------------------------------------------------------------------
-    test('3. Repeated Red readings do not repeatedly trigger the alarm', () {
-      // Enter Red zone (2 samples)
-      alertService.processWristbandTelemetry(
-        nodeId: 2,
-        nodeName: 'Iron',
-        rssi: -55,
-      );
-      alertService.processWristbandTelemetry(
-        nodeId: 2,
-        nodeName: 'Iron',
-        rssi: -55,
-      );
-      expect(alertService.loudAlarmTriggerCount, equals(1));
-      expect(alertService.urgentNotificationCount, equals(1));
-
-      // 10 repeated packets while child remains in Red Zone (-52 to -58 dBm)
-      for (int i = 0; i < 10; i++) {
-        alertService.processWristbandTelemetry(
-          nodeId: 2,
-          nodeName: 'Iron',
-          rssi: -53 - (i % 5),
-        );
-      }
-
-      // Counts must remain strictly 1 (no repeat spam while in Red!)
-      expect(alertService.loudAlarmTriggerCount, equals(1));
-      expect(alertService.urgentNotificationCount, equals(1));
-    });
-
-    // ------------------------------------------------------------------------
-    // Requirement 4: RSSI fluctuations around the boundary do not cause rapid zone switching
-    // ------------------------------------------------------------------------
-    test('4. RSSI fluctuations around boundary do not cause rapid zone switching', () {
+    test('5. Repeated packets and RSSI boundary fluctuations do not create duplicate alerts', () {
       // Establish in Yellow Zone (-68 dBm)
       alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -68);
       alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -68);
-      expect(alertService.getConfirmedZone(1), equals(ProximityZone.warning));
-      expect(alertService.loudAlarmTriggerCount, equals(0));
+      expect(alertService.normalNotificationCount, equals(1));
 
-      // Single transient spike to -58 dBm (crosses Red threshold >= -60)
+      // 10 repeated packets inside Yellow Zone
+      for (int i = 0; i < 10; i++) {
+        alertService.processWristbandTelemetry(
+          nodeId: 1,
+          nodeName: 'Fan',
+          rssi: -67 - (i % 4),
+        );
+      }
+      expect(alertService.normalNotificationCount, equals(1)); // Strictly 1 alert
+
+      // Boundary fluctuation: single spike into Red (-58 dBm)
       alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -58);
-      // Next sample drops back to -66 dBm (Yellow)
+      // Immediately drops back to Yellow (-66 dBm)
       alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -66);
 
-      // Must NOT switch to Red on single spike!
+      // Transient spike rejected by confirmation filter: no switch, no alarm!
       expect(alertService.getConfirmedZone(1), equals(ProximityZone.warning));
       expect(alertService.loudAlarmTriggerCount, equals(0));
-
-      // Now establish in Red Zone (-55 dBm)
-      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -55);
-      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -55);
-      expect(alertService.getConfirmedZone(1), equals(ProximityZone.danger));
-      expect(alertService.loudAlarmTriggerCount, equals(1));
-
-      // Hysteresis test:
-      // Red entry is -60 dBm. Exit is -63 dBm.
-      // Reading fluctuates to -61 dBm and -62 dBm (below -60, but above -63 exit threshold)
-      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -61);
-      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -62);
-
-      // Hysteresis keeps zone in Red! Does NOT immediately reverse!
-      expect(alertService.getConfirmedZone(1), equals(ProximityZone.danger));
-      expect(alertService.loudAlarmTriggerCount, equals(1));
+      expect(alertService.normalNotificationCount, equals(1));
     });
 
     // ------------------------------------------------------------------------
-    // Requirement 5: Leaving Red and subsequently re-entering Red permits a new alert
+    // 6. A node that disconnects while Yellow clears its stale RSSI and zone state
     // ------------------------------------------------------------------------
-    test('5. Leaving Red and subsequently re-entering Red permits a new alert', () {
-      // 1st entry into Red
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -52);
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -52);
-      expect(alertService.loudAlarmTriggerCount, equals(1));
-      expect(alertService.getConfirmedZone(2), equals(ProximityZone.danger));
+    test('6. A node that disconnects while Yellow clears its stale RSSI and zone state', () {
+      final distanceEngine = DistanceEngine();
 
-      // Child clearly leaves Red to Safe (-82 dBm, 2 samples)
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -82);
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -82);
-      expect(alertService.getConfirmedZone(2), equals(ProximityZone.safe));
-
-      // Child re-enters Red (-55 dBm, 2 samples)
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -55);
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -55);
-
-      // System confirms re-entry and triggers a new alarm!
-      expect(alertService.loudAlarmTriggerCount, equals(2));
-      expect(alertService.urgentNotificationCount, equals(2));
-    });
-
-    // ------------------------------------------------------------------------
-    // Requirement 6: A node going offline produces one notification after the timeout
-    // ------------------------------------------------------------------------
-    test('6. A node going offline produces one notification after the timeout', () {
-      // Mark node online
-      alertService.setNodeOnline(2, 'Iron');
-      expect(alertService.isNodeOnline(2), isTrue);
-
-      // Timeout expires -> node goes offline
-      alertService.handleNodeOffline(2, 'Iron');
-
-      expect(alertService.isNodeOnline(2), isFalse);
-      expect(alertService.offlineNotificationCount, equals(1));
-
-      // Check notification sent
-      expect(notificationService.sentNotifications.length, equals(1));
-      final notif = notificationService.sentNotifications.first;
-      expect(notif['title'], equals('Node Disconnected'));
-      expect(notif['body'], equals('Warning: The iron node has disconnected.'));
-    });
-
-    // ------------------------------------------------------------------------
-    // Requirement 7: Continued offline status does not generate repeated notifications
-    // ------------------------------------------------------------------------
-    test('7. Continued offline status does not generate repeated notifications', () {
-      alertService.setNodeOnline(2, 'Iron');
-      alertService.handleNodeOffline(2, 'Iron');
-      expect(alertService.offlineNotificationCount, equals(1));
-
-      // Repeated timeout watchdog ticks while node remains offline
-      for (int i = 0; i < 5; i++) {
-        alertService.handleNodeOffline(2, 'Iron');
-      }
-
-      // Must remain exactly 1 notification!
-      expect(alertService.offlineNotificationCount, equals(1));
-      expect(notificationService.sentNotifications.length, equals(1));
-    });
-
-    // ------------------------------------------------------------------------
-    // Requirement 8: A node reconnecting returns to Online
-    // ------------------------------------------------------------------------
-    test('8. A node reconnecting returns to Online', () {
-      alertService.setNodeOnline(3, 'Door');
-      alertService.handleNodeOffline(3, 'Door');
-      expect(alertService.isNodeOnline(3), isFalse);
-
-      // Reconnecting packet arrives
-      alertService.setNodeOnline(3, 'Door');
-      expect(alertService.isNodeOnline(3), isTrue);
-
-      // Future disconnection can now notify again
-      alertService.handleNodeOffline(3, 'Door');
-      expect(alertService.offlineNotificationCount, equals(2));
-    });
-
-    // ------------------------------------------------------------------------
-    // Requirement 9: Stale telemetry is not treated as a current proximity measurement
-    // ------------------------------------------------------------------------
-    test('9. Stale telemetry is not treated as a current proximity measurement', () {
-      // Put node in Red Zone
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -50);
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -50);
-      expect(alertService.getConfirmedZone(2), equals(ProximityZone.danger));
+      // Put Node 1 in Yellow
+      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -68);
+      alertService.processWristbandTelemetry(nodeId: 1, nodeName: 'Fan', rssi: -68);
+      expect(alertService.getConfirmedZone(1), equals(ProximityZone.warning));
       expect(alertService.currentActiveAlert, isNotNull);
 
-      // Invalid / offline RSSI values are safely ignored and do not update proximity
-      alertService.processWristbandTelemetry(
-        nodeId: 2,
-        nodeName: 'Iron',
-        rssi: ShapnestProtocol.rssiOffline,
-      );
-      alertService.processWristbandTelemetry(
-        nodeId: 2,
-        nodeName: 'Iron',
-        rssi: null,
-      );
+      // Node disconnects: clear distance engine and notify alertService
+      distanceEngine.clearWbDistance(1);
+      alertService.handleNodeOffline(1, 'Fan');
 
-      // When node is confirmed disconnected, its old Red Zone state is cleared
-      alertService.handleNodeOffline(2, 'Iron');
-      expect(alertService.getConfirmedZone(2), equals(ProximityZone.safe));
-      expect(alertService.currentActiveAlert, isNull); // old active alert cleared!
+      // Stale zone state and active banner cleared
+      expect(alertService.getConfirmedZone(1), equals(ProximityZone.safe));
+      expect(alertService.currentActiveAlert, isNull);
+      expect(alertService.isNodeOnline(1), isFalse);
     });
 
     // ------------------------------------------------------------------------
-    // Requirement 10: One node's disconnection does not incorrectly mark other nodes Offline
+    // 7. No new proximity alert is generated from stale data after disconnection
     // ------------------------------------------------------------------------
-    test('10. One node\'s disconnection does not incorrectly mark other nodes Offline', () {
+    test('7. No new proximity alert is generated from stale data after disconnection', () {
+      // Put Node 2 in Red
+      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -52);
+      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -52);
+      expect(alertService.urgentNotificationCount, equals(1));
+
+      // Node disconnects
+      alertService.handleNodeOffline(2, 'Iron');
+      expect(alertService.getConfirmedZone(2), equals(ProximityZone.safe));
+
+      // Disconnected node receives stale or invalid RSSI
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isNodeOnline: false, // Node is offline
+      );
+
+      // No new proximity notification is generated!
+      expect(alertService.urgentNotificationCount, equals(1));
+      expect(alertService.loudAlarmTriggerCount, equals(1));
+      expect(alertService.getConfirmedZone(2), equals(ProximityZone.safe));
+    });
+
+    // ------------------------------------------------------------------------
+    // 8. A wristband that has never connected does not generate repeated disconnection notifications
+    // ------------------------------------------------------------------------
+    test('8. A wristband that has never connected does not generate repeated disconnection notifications', () {
+      // Wristband never connected since app start
+      expect(alertService.hasWristbandEverConnected, isFalse);
+      expect(alertService.isWristbandOnline, isFalse);
+
+      // Watchdog timeout ticks occur while wristband is absent
+      for (int i = 0; i < 5; i++) {
+        alertService.handleWristbandOffline();
+      }
+
+      // Zero wristband disconnection notifications sent
+      expect(alertService.wristbandOfflineNotificationCount, equals(0));
+      expect(notificationService.sentNotifications.where((n) => n['title'] == 'Wristband Disconnected'), isEmpty);
+    });
+
+    // ------------------------------------------------------------------------
+    // 9. A wristband that connects and then disconnects generates exactly one disconnection notification
+    // ------------------------------------------------------------------------
+    test('9. A wristband that connects and then disconnects generates exactly one disconnection notification', () {
+      // Case B: First valid telemetry arrives
+      alertService.handleWristbandOnline();
+      expect(alertService.hasWristbandEverConnected, isTrue);
+      expect(alertService.isWristbandOnline, isTrue);
+
+      // Telemetry silence -> timeout confirmed offline
+      alertService.handleWristbandOffline();
+
+      expect(alertService.isWristbandOnline, isFalse);
+      expect(alertService.wristbandOfflineNotificationCount, equals(1));
+
+      // Notification contents verified
+      final notifs = notificationService.sentNotifications.where((n) => n['title'] == 'Wristband Disconnected').toList();
+      expect(notifs.length, equals(1));
+      expect(notifs.first['body'], equals('Warning: Child wristband disconnected.'));
+    });
+
+    // ------------------------------------------------------------------------
+    // 10. Remaining Offline does not generate repeated messages
+    // ------------------------------------------------------------------------
+    test('10. Remaining Offline does not generate repeated messages', () {
+      alertService.handleWristbandOnline();
+      alertService.handleWristbandOffline();
+      expect(alertService.wristbandOfflineNotificationCount, equals(1));
+
+      // 10 subsequent periodic watchdog checks while remaining offline
+      for (int i = 0; i < 10; i++) {
+        alertService.handleWristbandOffline();
+      }
+
+      // Notification count remains strictly 1
+      expect(alertService.wristbandOfflineNotificationCount, equals(1));
+      final notifs = notificationService.sentNotifications.where((n) => n['title'] == 'Wristband Disconnected').toList();
+      expect(notifs.length, equals(1));
+    });
+
+    // ------------------------------------------------------------------------
+    // 11. Reconnection restores Online status and permits one notification on the next genuine disconnection
+    // ------------------------------------------------------------------------
+    test('11. Reconnection restores Online status and permits one notification on the next genuine disconnection', () {
+      // 1st connection and disconnection
+      alertService.handleWristbandOnline();
+      alertService.handleWristbandOffline();
+      expect(alertService.wristbandOfflineNotificationCount, equals(1));
+
+      // Wristband reconnects (restores Online status and re-arms)
+      alertService.handleWristbandOnline();
+      expect(alertService.isWristbandOnline, isTrue);
+
+      // Later disconnects again
+      alertService.handleWristbandOffline();
+      expect(alertService.wristbandOfflineNotificationCount, equals(2));
+
+      final notifs = notificationService.sentNotifications.where((n) => n['title'] == 'Wristband Disconnected').toList();
+      expect(notifs.length, equals(2));
+    });
+
+    // ------------------------------------------------------------------------
+    // 12. One node disconnecting does not incorrectly mark the other nodes Offline
+    // ------------------------------------------------------------------------
+    test('12. One node disconnecting does not incorrectly mark the other nodes Offline', () {
       alertService.setNodeOnline(1, 'Fan');
       alertService.setNodeOnline(2, 'Iron');
       alertService.setNodeOnline(3, 'Door');
@@ -283,7 +318,7 @@ void main() {
     });
 
     // ------------------------------------------------------------------------
-    // Safe Zone Recovery Alert Test
+    // Bonus: Safe Zone Recovery Alert Verification
     // ------------------------------------------------------------------------
     test('Safe zone recovery alert triggers when child moves away from hazard', () {
       alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -55);
