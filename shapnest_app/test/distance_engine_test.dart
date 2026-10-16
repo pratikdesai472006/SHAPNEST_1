@@ -59,15 +59,15 @@ void main() {
       final engine = DistanceEngine();
       const nodeId = 1;
 
-      // Seed with initial 1.0m signal (-59 dBm)
+      // Seed with initial 1.0m signal (-77 dBm)
       for (int i = 0; i < 5; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -59);
+        engine.processRssi(nodeId: nodeId, rawRssi: -77);
       }
 
       // Simulate 20 noisy samples with realistic +/- 1.5 dBm stationary RF envelope
       final noisySamples = [
-        -58, -60, -59, -60, -58, -59, -60, -58, -59, -60,
-        -58, -60, -59, -58, -60, -59, -58, -60, -59, -60
+        -76, -78, -77, -78, -76, -77, -78, -76, -77, -78,
+        -76, -78, -77, -76, -78, -77, -76, -78, -77, -78
       ];
 
       final recordedDistances = <double>[];
@@ -89,14 +89,14 @@ void main() {
       final engine = DistanceEngine();
       const nodeId = 2; // Node 2: Iron hazard
 
-      // Start stationary at ~2.0m (-66 dBm)
+      // Start stationary at ~2.0m (-84 dBm)
       for (int i = 0; i < 5; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -66);
+        engine.processRssi(nodeId: nodeId, rawRssi: -84);
       }
 
-      // Sudden jump closer to ~0.5m (-53 dBm) — child stepped to hot iron
-      final stepRes1 = engine.processRssi(nodeId: nodeId, rawRssi: -53);
-      final stepRes2 = engine.processRssi(nodeId: nodeId, rawRssi: -53);
+      // Sudden jump closer to ~0.5m (-70 dBm) — child stepped to hot iron
+      final stepRes1 = engine.processRssi(nodeId: nodeId, rawRssi: -70);
+      final stepRes2 = engine.processRssi(nodeId: nodeId, rawRssi: -70);
 
       // Fast attack must trigger immediately
       expect(stepRes1.motionState, equals(FilterMotionState.fastAttack));
@@ -109,15 +109,15 @@ void main() {
       final engine = DistanceEngine();
       const nodeId = 3; // Node 3: Door
 
-      // Start at 0.5m (-53 dBm)
+      // Start at 0.5m (-70 dBm)
       for (int i = 0; i < 5; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -53);
+        engine.processRssi(nodeId: nodeId, rawRssi: -70);
       }
 
-      // Move away to 2.5m (-68 dBm)
-      engine.processRssi(nodeId: nodeId, rawRssi: -68);
-      engine.processRssi(nodeId: nodeId, rawRssi: -68);
-      final res3 = engine.processRssi(nodeId: nodeId, rawRssi: -68);
+      // Move away to 2.5m (-86 dBm)
+      engine.processRssi(nodeId: nodeId, rawRssi: -86);
+      engine.processRssi(nodeId: nodeId, rawRssi: -86);
+      final res3 = engine.processRssi(nodeId: nodeId, rawRssi: -86);
 
       expect(res3.distanceMeters, greaterThan(1.30));
     });
@@ -148,13 +148,13 @@ void main() {
       final engine = DistanceEngine();
       const nodeId = 2; // Node 2: Iron
 
-      // First sample at 1.0m (-59 dBm)
-      final res1 = engine.processRssi(nodeId: nodeId, rawRssi: -59);
+      // First sample at 1.0m (-77 dBm)
+      final res1 = engine.processRssi(nodeId: nodeId, rawRssi: -77);
       expect(res1.distanceMeters, closeTo(1.00, 0.05),
           reason: 'Initial sample must seed immediately to true distance without lag');
 
       // Second sample confirms distance rapidly
-      final res2 = engine.processRssi(nodeId: nodeId, rawRssi: -59);
+      final res2 = engine.processRssi(nodeId: nodeId, rawRssi: -77);
       expect(res2.distanceMeters, closeTo(1.00, 0.05));
     });
 
@@ -162,26 +162,26 @@ void main() {
       final engine = DistanceEngine();
       const nodeId = 2; // Node 2: Iron
 
-      // Start at 2.0m (-66 dBm)
+      // Start at 2.0m (-84 dBm)
       for (int i = 0; i < 6; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -66);
+        engine.processRssi(nodeId: nodeId, rawRssi: -84);
       }
-      final startDist = engine.processRssi(nodeId: nodeId, rawRssi: -66).distanceMeters;
-      expect(startDist, closeTo(2.00, 0.15));
+      final startDist = engine.processRssi(nodeId: nodeId, rawRssi: -84).distanceMeters;
+      expect(startDist, closeTo(2.74, 0.15));
 
-      // Move closer consecutively: first step to ~1.4m (-62 dBm)
+      // Move closer consecutively: first step to ~1.5m (-80 dBm)
       for (int i = 0; i < 4; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -62);
+        engine.processRssi(nodeId: nodeId, rawRssi: -80);
       }
-      final midDist = engine.processRssi(nodeId: nodeId, rawRssi: -62).distanceMeters;
+      final midDist = engine.processRssi(nodeId: nodeId, rawRssi: -80).distanceMeters;
       expect(midDist, lessThan(startDist), reason: 'First decrease must be reflected');
-      expect(midDist, lessThan(1.65));
+      expect(midDist, lessThan(2.10));
 
-      // Second step closer to ~0.8m (-57 dBm)
+      // Second step closer to ~0.8m (-75 dBm)
       for (int i = 0; i < 4; i++) {
-        engine.processRssi(nodeId: nodeId, rawRssi: -57);
+        engine.processRssi(nodeId: nodeId, rawRssi: -75);
       }
-      final closeDist = engine.processRssi(nodeId: nodeId, rawRssi: -57).distanceMeters;
+      final closeDist = engine.processRssi(nodeId: nodeId, rawRssi: -75).distanceMeters;
       expect(closeDist, lessThan(midDist), reason: 'Second consecutive decrease must be reflected');
       expect(closeDist, lessThan(1.10));
     });
@@ -432,8 +432,8 @@ void main() {
       final ironNode = nodes.firstWhere((n) => n.id == 2);
 
       expect(ironNode.isUserCalibrated, isFalse);
-      expect(ironNode.calibratedA, equals(-59));
-      expect(ironNode.pathLossExpN, equals(2.2));
+      expect(ironNode.calibratedA, equals(-77));
+      expect(ironNode.pathLossExpN, equals(1.6));
 
       // Incoming beacon from Node 2 with bench-calibrated parameters: A = -56, n = 2.4
       final beacon = ParsedNodeBeacon(
@@ -517,9 +517,9 @@ void main() {
       // Verify startup tracking source defaults to Child Wristband for instant inter-node distance display
       expect(bleService.trackingSource, equals(TrackingSource.wristband));
 
-      // Verify wristband offline timeout is at least 3000ms to tolerate Android BLE scan batching delays
-      expect(ShapnestProtocol.wristbandOfflineTimeout.inMilliseconds, greaterThanOrEqualTo(3000));
-      expect(ShapnestProtocol.wristbandOfflineTimeout, equals(const Duration(milliseconds: 3500)));
+      // Verify wristband offline timeout is configured for responsive offline detection (2000ms)
+      expect(ShapnestProtocol.wristbandOfflineTimeout.inMilliseconds, greaterThanOrEqualTo(1500));
+      expect(ShapnestProtocol.wristbandOfflineTimeout, equals(const Duration(milliseconds: 2000)));
 
       bleService.dispose();
     });

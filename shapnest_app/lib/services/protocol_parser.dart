@@ -164,8 +164,14 @@ class ProtocolParser {
         final filteredRssi = ByteData.view(Uint8List.fromList([bytes[offset + 3]]).buffer).getInt8(0);
 
         double? distanceM;
-        if (distCm != ShapnestProtocol.distanceOfflineCm && state != NodeState.offline) {
-          distanceM = distCm / 100.0;
+        if (distCm != ShapnestProtocol.distanceOfflineCm &&
+            distCm > 0 &&
+            distCm <= 1500 &&
+            state != NodeState.offline) {
+          distanceM = (distCm / 100.0).clamp(
+            ShapnestProtocol.distanceMinM,
+            ShapnestProtocol.distanceMaxM,
+          );
         }
 
         parsedBlocks.add(ParsedWristbandNodeBlock(

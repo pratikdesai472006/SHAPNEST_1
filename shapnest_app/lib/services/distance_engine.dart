@@ -58,38 +58,91 @@ class DistanceEngine {
   static const double _maxRetreatSpeedMps = 8.0; // Rapid physical separation
   static const double _maxApproachSpeedMps = 8.0; // Rapid physical approach
 
-  // Per-node calibrated 1m reference RSSI (A)
+  // Per-node calibrated 1m reference RSSI (A) for Phone link
   final Map<int, int> _calibratedA = {};
 
-  // Environmental path loss exponent (n)
-  double globalPathLossN = 2.2;
+  // Per-node calibrated 1m reference RSSI (A) for Child Wristband Link
+  final Map<int, int> _wbCalibratedA = {};
+
+  // Environmental path loss exponent (n) per node (default 1.6 in free space)
+  final Map<int, double> _nodePathLossN = {};
+  double globalPathLossN = 1.6;
+
+  /// Default free-space path loss exponent (n)
+  static double getDefaultFreeSpaceN(int nodeId) {
+    return 1.6; // User requested default n = 1.6
+  }
 
   DistanceEngine() {
     for (int i = ShapnestProtocol.nodeIdMin; i <= ShapnestProtocol.nodeIdMax; i++) {
       _kalmanFilters[i] = RssiKalmanFilter();
       _sampleBuffers[i] = [];
       _calibratedA[i] = ShapnestProtocol.defaultRefRssi1m;
+      _wbCalibratedA[i] = ShapnestProtocol.defaultWbRefRssi1m;
+      _nodePathLossN[i] = getDefaultFreeSpaceN(i);
     }
   }
 
   /// Initialize and load saved calibration parameters from local storage
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    globalPathLossN = prefs.getDouble('shapnest_path_loss_n') ?? 2.2;
+    globalPathLossN = prefs.getDouble('shapnest_path_loss_n') ?? 1.6;
+
+    // Calibration migration: ensure -77 dBm calibration is applied
+    final calMigration = prefs.getString('shapnest_cal_profile_v1');
+    final needsProfileReset = calMigration != 'cal_77dbm_v1';
 
     for (int i = ShapnestProtocol.nodeIdMin; i <= ShapnestProtocol.nodeIdMax; i++) {
-      final savedA = prefs.getInt('shapnest_cal_a_node_$i');
-      if (savedA != null) {
-        _calibratedA[i] = savedA;
+      if (needsProfileReset) {
+        _calibratedA[i] = ShapnestProtocol.defaultRefRssi1m; // -77 dBm
+        _wbCalibratedA[i] = ShapnestProtocol.defaultWbRefRssi1m; // -77 dBm
+        await prefs.setInt('shapnest_cal_a_node_$i', ShapnestProtocol.defaultRefRssi1m);
+        await prefs.setInt('shapnest_cal_wb_a_node_$i', ShapnestProtocol.defaultWbRefRssi1m);
+      } else {
+        final savedA = prefs.getInt('shapnest_cal_a_node_$i');
+        if (savedA != null && savedA >= -95 && savedA <= -30) {
+          _calibratedA[i] = savedA;
+        } else {
+          _calibratedA[i] = ShapnestProtocol.defaultRefRssi1m;
+          await prefs.setInt('shapnest_cal_a_node_$i', ShapnestProtocol.defaultRefRssi1m);
+        }
+        final savedWbA = prefs.getInt('shapnest_cal_wb_a_node_$i');
+        if (savedWbA != null && savedWbA >= -95 && savedWbA <= -30) {
+          _wbCalibratedA[i] = savedWbA;
+        } else {
+          _wbCalibratedA[i] = ShapnestProtocol.defaultWbRefRssi1m;
+          await prefs.setInt('shapnest_cal_wb_a_node_$i', ShapnestProtocol.defaultWbRefRssi1m);
+        }
       }
+      final savedN = prefs.getDouble('shapnest_path_loss_n_node_$i');
+      if (savedN != null) {
+        _nodePathLossN[i] = savedN;
+      }
+    }
+    if (needsProfileReset) {
+      await prefs.setString('shapnest_cal_profile_v1', 'cal_77dbm_v1');
     }
   }
 
-  /// Save calibration for a specific node
+  /// Save calibration for a specific node (Phone link)
   Future<void> saveCalibration(int nodeId, int referenceRssi1m) async {
     _calibratedA[nodeId] = referenceRssi1m;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('shapnest_cal_a_node_$nodeId', referenceRssi1m);
+  }
+
+  /// Save calibration for Child Wristband link
+  Future<void> saveWbCalibration(int nodeId, int referenceRssi1m) async {
+    _wbCalibratedA[nodeId] = referenceRssi1m;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('shapnest_cal_wb_a_node_$nodeId', referenceRssi1m);
+  }
+
+  /// Save per-node path loss exponent
+  Future<void> saveNodePathLossN(int nodeId, double n) async {
+    _nodePathLossN[nodeId] = n;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('shapnest_path_loss_n_node_$nodeId', n);
   }
 
   /// Save global path loss exponent
@@ -99,15 +152,25 @@ class DistanceEngine {
     await prefs.setDouble('shapnest_path_loss_n', n);
   }
 
+  double getNodePathLossN(int nodeId) {
+    return _nodePathLossN[nodeId] ?? globalPathLossN;
+  }
+
   /// Reset calibration back to hardware defaults
   Future<void> resetCalibration(int nodeId) async {
     _calibratedA[nodeId] = ShapnestProtocol.defaultRefRssi1m;
+    _wbCalibratedA[nodeId] = ShapnestProtocol.defaultWbRefRssi1m;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('shapnest_cal_a_node_$nodeId');
+    await prefs.remove('shapnest_cal_wb_a_node_$nodeId');
   }
 
   int getCalibratedA(int nodeId) {
     return _calibratedA[nodeId] ?? ShapnestProtocol.defaultRefRssi1m;
+  }
+
+  int getWbCalibratedA(int nodeId) {
+    return _wbCalibratedA[nodeId] ?? ShapnestProtocol.defaultWbRefRssi1m;
   }
 
   RssiKalmanFilter? getFilter(int nodeId) => _kalmanFilters[nodeId];
@@ -123,10 +186,13 @@ class DistanceEngine {
     required int rawRssi,
     int? customA,
     double? customN,
+    bool isWristband = false,
   }) {
+    final filterKey = isWristband ? (nodeId + 100) : nodeId;
+
     // Physical sanity gate
     if (rawRssi < -100 || rawRssi > -15) {
-      final lastDist = _displayedDistances[nodeId] ?? 1.0;
+      final lastDist = _displayedDistances[filterKey] ?? 1.0;
       return DistanceResult(
         distanceMeters: lastDist,
         filteredRssi: rawRssi,
@@ -136,10 +202,10 @@ class DistanceEngine {
       );
     }
 
-    final kalman = _kalmanFilters.putIfAbsent(nodeId, () => RssiKalmanFilter());
+    final kalman = _kalmanFilters.putIfAbsent(filterKey, () => RssiKalmanFilter());
 
     // 1. Maintain compact sliding window buffer for impulse rejection
-    final buffer = _sampleBuffers.putIfAbsent(nodeId, () => []);
+    final buffer = _sampleBuffers.putIfAbsent(filterKey, () => []);
 
     // Fast-Attack / Step Change: Flush on meaningful step change (>= 3.8 dBm) so physical motion flushes stale samples
     if (kalman.isInitialized && (rawRssi - kalman.currentRssi).abs() >= 3.8) {
@@ -162,7 +228,10 @@ class DistanceEngine {
 
     // 4. Log-Distance Path Loss Model
     // d = 10 ^ ((A - RSSI) / (10 * n))
-    final refA = (customA ?? _calibratedA[nodeId] ?? ShapnestProtocol.defaultRefRssi1m).toDouble();
+    final fallbackA = isWristband
+        ? (_wbCalibratedA[nodeId] ?? ShapnestProtocol.defaultWbRefRssi1m)
+        : (_calibratedA[nodeId] ?? ShapnestProtocol.defaultRefRssi1m);
+    final refA = (customA ?? fallbackA).toDouble();
     final expN = customN ?? globalPathLossN;
 
     final exponent = (refA - filteredRssiDouble) / (10.0 * expN);
@@ -170,8 +239,8 @@ class DistanceEngine {
 
     // 5. Asymmetric Velocity Limiting
     final now = DateTime.now();
-    final lastTime = _lastCalculationTimes[nodeId];
-    final lastDist = _lastCalculatedDistances[nodeId];
+    final lastTime = _lastCalculationTimes[filterKey];
+    final lastDist = _lastCalculatedDistances[filterKey];
 
     if (lastTime != null && lastDist != null && motionState == FilterMotionState.stationary) {
       final dtSec = now.difference(lastTime).inMilliseconds / 1000.0;
@@ -186,8 +255,8 @@ class DistanceEngine {
       }
     }
 
-    _lastCalculationTimes[nodeId] = now;
-    _lastCalculatedDistances[nodeId] = calculatedDistance;
+    _lastCalculationTimes[filterKey] = now;
+    _lastCalculatedDistances[filterKey] = calculatedDistance;
 
     // 6. Operational Boundary Clamping [0.15m .. 8.00m]
     bool isClamped = false;
@@ -200,9 +269,9 @@ class DistanceEngine {
     }
 
     // 7. Ultra-Stable Hysteresis Dead-Band with Persistence & Smooth Motion Tracking
-    double lockedDist = _displayedDistances[nodeId] ?? calculatedDistance;
-    double smoothDist = _smoothDistances[nodeId] ?? lockedDist;
-    int breachCount = _deadbandBreachCounts[nodeId] ?? 0;
+    double lockedDist = _displayedDistances[filterKey] ?? calculatedDistance;
+    double smoothDist = _smoothDistances[filterKey] ?? lockedDist;
+    int breachCount = _deadbandBreachCounts[filterKey] ?? 0;
 
     // Dynamic dead-band scales with distance zone
     double deadband;
@@ -237,9 +306,9 @@ class DistanceEngine {
       lockedDist = smoothDist;
     }
 
-    _displayedDistances[nodeId] = lockedDist;
-    _smoothDistances[nodeId] = smoothDist;
-    _deadbandBreachCounts[nodeId] = breachCount;
+    _displayedDistances[filterKey] = lockedDist;
+    _smoothDistances[filterKey] = smoothDist;
+    _deadbandBreachCounts[filterKey] = breachCount;
 
     return DistanceResult(
       distanceMeters: smoothDist,

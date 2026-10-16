@@ -9,6 +9,15 @@ import 'ui/home_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Resilient error handling so the app never shows the red crash screen
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('# [UI GUARD] Handled framework exception: ${details.exception}');
+  };
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    return const SizedBox.shrink();
+  };
+
   // Dynamic status bar navigation styling
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(

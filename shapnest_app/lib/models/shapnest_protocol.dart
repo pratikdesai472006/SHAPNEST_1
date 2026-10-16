@@ -59,20 +59,29 @@ class ShapnestProtocol {
   static const int nodeIdMin = 1;
   static const int nodeIdMax = 3;
 
-  // Defaults
+  // RSSI Proximity Zones & Hysteresis Thresholds (Configurable defaults)
+  static const int defaultRedZoneEntryRssiDbm = -60;   // Very Near / Red Zone entry threshold
+  static const int defaultRedZoneExitRssiDbm = -63;    // Exit Red Zone (3 dB hysteresis)
+  static const int defaultYellowZoneEntryRssiDbm = -74; // Near / Yellow Zone entry threshold
+  static const int defaultYellowZoneExitRssiDbm = -77;  // Exit Yellow Zone (3 dB hysteresis)
+  static const int rssiHysteresisMarginDbm = 3;        // 3 dB hysteresis to prevent boundary flutter
+  static const int defaultZoneConfirmationSamples = 2;  // Consecutive samples required for confirmed zone transition
+
   static const int defaultTxPowerDbm = 9;
-  static const int defaultRefRssi1m = -59;
-  static const int defaultPathLossExpX10 = 22; // n = 2.2
+  static const int defaultRefRssi1m = -77;
+  static const int defaultWbRefRssi1m = -77; // Calibrated -77 dBm @ 1m in free space
+  static const int defaultPathLossExpX10 = 16; // n = 1.6 in free space
 
   // Distance bounds
   static const double distanceMinM = 0.15;
   static const double distanceMaxM = 8.00;
   static const int distanceOfflineCm = 0xFFFF;
+  static const int rssiOffline = -128;
 
-  // Staleness timeouts
-  static const Duration nodeActiveTimeout = Duration(milliseconds: 1400);
-  static const Duration nodeOfflineTimeout = Duration(milliseconds: 3500);
-  static const Duration wristbandOfflineTimeout = Duration(milliseconds: 3500);
+  // Staleness timeouts (Optimized for faster reading and offline detection)
+  static const Duration nodeActiveTimeout = Duration(milliseconds: 1000);
+  static const Duration nodeOfflineTimeout = Duration(milliseconds: 2500);
+  static const Duration wristbandOfflineTimeout = Duration(milliseconds: 2000);
 
   static NodeState unpackState(int packedByte) {
     final raw = (packedByte >> 4) & 0x03;

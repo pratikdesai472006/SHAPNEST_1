@@ -3,9 +3,12 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/node_data.dart';
 import '../models/shapnest_protocol.dart';
+import 'alert_service.dart';
 import 'distance_engine.dart';
+import 'notification_service.dart';
 import 'protocol_parser.dart';
 
 enum TrackingSource {
@@ -33,7 +36,6 @@ class BleService extends ChangeNotifier {
 
   // Active tracking display mode (Defaults to Child Wristband for instant tracking)
   TrackingSource trackingSource = TrackingSource.wristband;
-  bool _userExplicitlySelectedSource = false;
 
   // Wristband state
   bool isWristbandOnline = false;
@@ -44,6 +46,9 @@ class BleService extends ChangeNotifier {
   bool isScanning = false;
   bool isBluetoothAvailable = false;
   String statusMessage = 'Ready';
+
+  // Safety Alert Messaging Engine (Yellow: 1 min, Red: 15s)
+  final AlertService alertService = AlertService();
 
   // Simulation mode
   bool isSimulating = false;
@@ -107,8 +112,8 @@ class BleService extends ChangeNotifier {
       isBluetoothAvailable = false;
     }
 
-    // Start periodic watchdog timer for staleness & offline detection (5 Hz)
-    _stalenessTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+    // Start periodic watchdog timer for staleness & offline detection (10 Hz faster response)
+    _stalenessTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       _checkStaleness();
     });
 
@@ -122,24 +127,65 @@ class BleService extends ChangeNotifier {
       notifyListeners();
     });
 
-    // Load saved calibration parameters into node models
+    // Load saved calibration and zone parameters into per-node models
+    final prefs = await SharedPreferences.getInstance();
     for (final node in nodes) {
-      node.calibratedA = distanceEngine.getCalibratedA(node.id);
-      node.pathLossExpN = distanceEngine.globalPathLossN;
+      node.directCalibratedA = distanceEngine.getCalibratedA(node.id);
+      node.wbCalibratedA = distanceEngine.getWbCalibratedA(node.id);
+      node.pathLossExpN = distanceEngine.getNodePathLossN(node.id);
+
+      final savedDanger = prefs.getDouble('shapnest_danger_node_${node.id}');
+      if (savedDanger != null) {
+        node.dangerDistanceM = savedDanger;
+      }
+      final savedWarn = prefs.getDouble('shapnest_warn_node_${node.id}');
+      if (savedWarn != null) {
+        node.warningDistanceM = savedWarn;
+      }
+
+      final savedDangerRssi = prefs.getInt('shapnest_danger_rssi_node_${node.id}');
+      if (savedDangerRssi != null) {
+        node.dangerRssiDbm = savedDangerRssi;
+      }
+      final savedWarnRssi = prefs.getInt('shapnest_warn_rssi_node_${node.id}');
+      if (savedWarnRssi != null) {
+        node.warningRssiDbm = savedWarnRssi;
+      }
+
+      // Load user customized node names
+      final savedName = prefs.getString('shapnest_node_name_${node.id}');
+      if (savedName != null && savedName.trim().isNotEmpty) {
+        node.name = savedName.trim();
+      }
     }
   }
 
-  /// Request all required runtime permissions on Android
+  /// Rename a node as per user customization and persist in local storage
+  Future<void> renameNode(int nodeId, String newName) async {
+    final index = nodes.indexWhere((n) => n.id == nodeId);
+    if (index != -1 && newName.trim().isNotEmpty) {
+      nodes[index].name = newName.trim();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('shapnest_node_name_$nodeId', newName.trim());
+      _addLog('# [CONFIG] Node $nodeId renamed to "${newName.trim()}".');
+      notifyListeners();
+    }
+  }
+
+  /// Request all required runtime permissions on Android/iOS (Bluetooth, Location, System Notifications)
   Future<bool> requestPermissions() async {
     Map<Permission, PermissionStatus> statuses = await [
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.locationWhenInUse,
+      Permission.notification,
     ].request();
+
+    await NotificationService().requestPermissions();
 
     final allGranted = statuses.values.every((s) => s.isGranted);
     if (!allGranted) {
-      _addLog('# [WARN] Some Bluetooth/Location permissions were denied.');
+      _addLog('# [WARN] Some Bluetooth/Location/Notification permissions were denied.');
     }
     return allGranted;
   }
@@ -204,9 +250,8 @@ class BleService extends ChangeNotifier {
   }
 
   void setTrackingSource(TrackingSource source) {
-    _userExplicitlySelectedSource = true;
     trackingSource = source;
-    _addLog('# [LOG] Switched tracking source to: ${source == TrackingSource.directPhone ? "Direct Phone" : "Child Wristband"}');
+    _addLog('# [LOG] Tracking mode switched: ${source == TrackingSource.directPhone ? "Phone Direct Bluetooth" : "Child Wristband"}.');
     notifyListeners();
   }
 
@@ -231,9 +276,11 @@ class BleService extends ChangeNotifier {
         node.directRawRssi = rawRssi;
         node.directLastSeen = now;
         node.directState = NodeState.active;
+        alertService.setNodeOnline(nodeId, node.name);
 
         // Adopt over-the-air broadcasted calibration unless user calibrated manually on phone
-        if (!node.isUserCalibrated) {
+        // Ignore legacy -59 dBm firmware constant so calibrated -80 dBm remains intact
+        if (!node.isUserCalibrated && parsed.calibratedRssi1m != -59) {
           node.calibratedA = parsed.calibratedRssi1m;
           node.pathLossExpN = parsed.pathLossExpN;
         }
@@ -287,35 +334,71 @@ class BleService extends ChangeNotifier {
         wristbandSequence = parsed.sequence;
         lastWristbandSeen = now;
 
-        // Auto-switch to Wristband Tracking mode when wristband telemetry is detected
-        if (!_userExplicitlySelectedSource && trackingSource == TrackingSource.directPhone) {
-          trackingSource = TrackingSource.wristband;
-          _addLog('# [LOG] Child Wristband detected! Auto-selected Wristband Tracking mode.');
-        }
-
         for (final block in parsed.nodes) {
           final nodeIndex = nodes.indexWhere((n) => n.id == block.nodeId);
           if (nodeIndex == -1) continue;
 
           final node = nodes[nodeIndex];
           node.wbState = block.state;
-          if (block.distanceM != null) {
-            node.wbDistanceM = distanceEngine.filterWristbandDistance(
-              nodeId: block.nodeId,
-              incomingDistanceM: block.distanceM!,
-            );
-          } else {
-            node.wbDistanceM = null;
-            distanceEngine.clearWbDistance(block.nodeId);
-          }
           node.wbFilteredRssi = block.filteredRssi;
           node.wbLastSeen = now;
+
+          if (block.state == NodeState.offline) {
+            node.wbDistanceM = null;
+            distanceEngine.clearWbDistance(block.nodeId);
+          } else {
+            // Consistent distance processing using phone's calibrated Dual-Regime Kalman Distance Engine
+            if (block.filteredRssi != ShapnestProtocol.rssiOffline &&
+                block.filteredRssi >= -105 &&
+                block.filteredRssi <= -15) {
+              final distRes = distanceEngine.processRssi(
+                nodeId: block.nodeId,
+                rawRssi: block.filteredRssi,
+                customA: node.wbCalibratedA,
+                customN: node.pathLossExpN,
+                isWristband: true,
+              );
+              node.wbDistanceM = distRes.distanceMeters;
+            } else if (block.distanceM != null) {
+              node.wbDistanceM = distanceEngine.filterWristbandDistance(
+                nodeId: block.nodeId,
+                incomingDistanceM: block.distanceM!,
+              );
+            }
+          }
+
+          // Safety Alert Engine: evaluates signal strength (Red >= -60 dBm) & active hazard condition
+          alertService.processWristbandTelemetry(
+            nodeId: node.id,
+            nodeName: node.name,
+            rssi: node.wbFilteredRssi,
+            isHazardActive: node.isHazardConditionFulfilled,
+            hazardDescription: node.hazardDescription,
+            distanceM: node.wbDistanceM,
+            dangerRssiDbm: node.dangerRssiDbm,
+            warningRssiDbm: node.warningRssiDbm,
+            dangerDistanceM: node.dangerDistanceM,
+            warningDistanceM: node.warningDistanceM,
+          );
+
+          // Collect wristband calibration samples when Calibration Wizard is running
+          if (activeCalibration != null &&
+              activeCalibration!.nodeId == block.nodeId &&
+              !activeCalibration!.isCompleted &&
+              block.filteredRssi != ShapnestProtocol.rssiOffline &&
+              block.filteredRssi >= -105 &&
+              block.filteredRssi <= -15) {
+            activeCalibration!.collectedRssi.add(block.filteredRssi);
+            if (activeCalibration!.collectedRssi.length >= activeCalibration!.targetSamples) {
+              _finishCalibration();
+            }
+          }
         }
 
         if (wasOffline || parsed.sequence % 4 == 0) {
-          final d1 = nodes[0].wbDistanceM != null ? '${nodes[0].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[0].wbState == NodeState.offline ? 'OFF' : '——');
-          final d2 = nodes[1].wbDistanceM != null ? '${nodes[1].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[1].wbState == NodeState.offline ? 'OFF' : '——');
-          final d3 = nodes[2].wbDistanceM != null ? '${nodes[2].wbDistanceM!.toStringAsFixed(2)}m' : (nodes[2].wbState == NodeState.offline ? 'OFF' : '——');
+          final d1 = nodes[0].wbFilteredRssi != null ? '${nodes[0].wbFilteredRssi}dBm (${nodes[0].getProximityLabel(nodes[0].wbFilteredRssi)})' : (nodes[0].wbState == NodeState.offline ? 'OFF' : '——');
+          final d2 = nodes[1].wbFilteredRssi != null ? '${nodes[1].wbFilteredRssi}dBm (${nodes[1].getProximityLabel(nodes[1].wbFilteredRssi)})' : (nodes[1].wbState == NodeState.offline ? 'OFF' : '——');
+          final d3 = nodes[2].wbFilteredRssi != null ? '${nodes[2].wbFilteredRssi}dBm (${nodes[2].getProximityLabel(nodes[2].wbFilteredRssi)})' : (nodes[2].wbState == NodeState.offline ? 'OFF' : '——');
           _addLog('# [WRISTBAND] WB#${parsed.wristbandId} (Seq #${parsed.sequence}) ⟷ Fan: $d1 | Iron: $d2 | Door: $d3');
         }
       }
@@ -336,7 +419,9 @@ class BleService extends ChangeNotifier {
           for (final node in nodes) {
             node.wbState = NodeState.offline;
             node.wbDistanceM = null;
+            node.wbFilteredRssi = null;
             distanceEngine.clearWbDistance(node.id);
+            alertService.handleNodeOffline(node.id, node.name);
           }
           _addLog('# [WARN] Child Wristband LOST (> ${ShapnestProtocol.wristbandOfflineTimeout.inMilliseconds}ms silence).');
         }
@@ -350,6 +435,8 @@ class BleService extends ChangeNotifier {
         if (age > ShapnestProtocol.nodeOfflineTimeout) {
           node.directState = NodeState.offline;
           node.directDistanceM = null;
+          node.directFilteredRssi = null;
+          node.directRawRssi = null;
         } else if (age > ShapnestProtocol.nodeActiveTimeout) {
           node.directState = NodeState.stale;
         }
@@ -360,10 +447,20 @@ class BleService extends ChangeNotifier {
         if (age > ShapnestProtocol.nodeOfflineTimeout) {
           node.wbState = NodeState.offline;
           node.wbDistanceM = null;
+          node.wbFilteredRssi = null;
           distanceEngine.clearWbDistance(node.id);
         } else if (age > ShapnestProtocol.nodeActiveTimeout) {
           node.wbState = NodeState.stale;
         }
+      }
+
+      // Check offline transition for active tracking source
+      final isNodeOffline = (trackingSource == TrackingSource.wristband)
+          ? (node.wbState == NodeState.offline)
+          : (node.directState == NodeState.offline);
+
+      if (isNodeOffline) {
+        alertService.handleNodeOffline(node.id, node.name);
       }
 
       // Reset sensor state only when both direct link and wristband telemetry are offline
@@ -409,15 +506,33 @@ class BleService extends ChangeNotifier {
     activeCalibration!.finalCalibratedA = calibratedA;
     activeCalibration!.isCompleted = true;
 
-    // Save into distance engine & node data
+    // Save into distance engine & node data for both wristband and direct links
+    await distanceEngine.saveWbCalibration(nodeId, calibratedA);
     await distanceEngine.saveCalibration(nodeId, calibratedA);
     final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
     if (nodeIndex != -1) {
-      nodes[nodeIndex].calibratedA = calibratedA;
+      nodes[nodeIndex].wbCalibratedA = calibratedA;
+      nodes[nodeIndex].directCalibratedA = calibratedA;
       nodes[nodeIndex].isUserCalibrated = true;
     }
 
-    _addLog('# [CALIBRATION] Node $nodeId Calibrated! New 1m RSSI (A): $calibratedA dBm.');
+    _addLog('# [CALIBRATION] Node $nodeId Wristband Calibrated! New 1m RSSI (A): $calibratedA dBm.');
+    notifyListeners();
+  }
+
+  /// Nudge reference RSSI by +1 or -1 dBm for instantaneous real-world fine-tuning
+  Future<void> nudgeCalibration(int nodeId, int deltaDbm) async {
+    final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
+    if (nodeIndex == -1) return;
+
+    final node = nodes[nodeIndex];
+    final newA = (node.wbCalibratedA + deltaDbm).clamp(-95, -30);
+    node.wbCalibratedA = newA;
+    node.directCalibratedA = newA;
+    node.isUserCalibrated = true;
+    await distanceEngine.saveWbCalibration(nodeId, newA);
+    await distanceEngine.saveCalibration(nodeId, newA);
+    _addLog('# [CALIBRATION] Node $nodeId 1m A nudged to: $newA dBm');
     notifyListeners();
   }
 
@@ -426,10 +541,74 @@ class BleService extends ChangeNotifier {
     final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
     if (nodeIndex != -1) {
       nodes[nodeIndex].calibratedA = ShapnestProtocol.defaultRefRssi1m;
+      nodes[nodeIndex].wbCalibratedA = ShapnestProtocol.defaultWbRefRssi1m;
       nodes[nodeIndex].isUserCalibrated = false;
     }
-    _addLog('# [CALIBRATION] Node $nodeId calibration reset to default (-59 dBm).');
+    _addLog('# [CALIBRATION] Node $nodeId calibration reset to default (-77 dBm).');
     notifyListeners();
+  }
+
+  Future<void> setNodePathLossN(int nodeId, double n) async {
+    final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
+    if (nodeIndex != -1) {
+      nodes[nodeIndex].pathLossExpN = n;
+    }
+    await distanceEngine.saveNodePathLossN(nodeId, n);
+    _addLog('# [CALIBRATION] Node $nodeId exponent (n) set to: ${n.toStringAsFixed(1)}');
+    notifyListeners();
+  }
+
+  Future<void> setNodeDangerDistance(int nodeId, double distM) async {
+    final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
+    if (nodeIndex != -1) {
+      nodes[nodeIndex].dangerDistanceM = distM;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('shapnest_danger_node_$nodeId', distM);
+    _addLog('# [SAFETY] Node $nodeId Danger Zone set to < ${distM.toStringAsFixed(2)}m');
+    notifyListeners();
+  }
+
+  Future<void> setNodeWarningDistance(int nodeId, double distM) async {
+    final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
+    if (nodeIndex != -1) {
+      nodes[nodeIndex].warningDistanceM = distM;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('shapnest_warn_node_$nodeId', distM);
+    _addLog('# [SAFETY] Node $nodeId Warning Zone set to < ${distM.toStringAsFixed(2)}m');
+    notifyListeners();
+  }
+
+  Future<void> setNodeDangerRssi(int nodeId, int rssiDbm) async {
+    final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
+    if (nodeIndex != -1) {
+      nodes[nodeIndex].dangerRssiDbm = rssiDbm;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('shapnest_danger_rssi_node_$nodeId', rssiDbm);
+    _addLog('# [SAFETY] Node $nodeId Red Danger RSSI threshold set to >= $rssiDbm dBm');
+    notifyListeners();
+  }
+
+  Future<void> setNodeWarningRssi(int nodeId, int rssiDbm) async {
+    final nodeIndex = nodes.indexWhere((n) => n.id == nodeId);
+    if (nodeIndex != -1) {
+      nodes[nodeIndex].warningRssiDbm = rssiDbm;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('shapnest_warn_rssi_node_$nodeId', rssiDbm);
+    _addLog('# [SAFETY] Node $nodeId Yellow Warning RSSI threshold set to >= $rssiDbm dBm');
+    notifyListeners();
+  }
+
+  void toggleFanState() {
+    final fanIndex = nodes.indexWhere((n) => n.id == 1);
+    if (fanIndex != -1) {
+      nodes[fanIndex].isFanOn = !nodes[fanIndex].isFanOn;
+      _addLog('# [FAN EVENT] Node 1 Fan toggled -> ${nodes[fanIndex].isFanOn ? "ON (Spinning Hazard)" : "OFF (Safe)"}');
+      notifyListeners();
+    }
   }
 
   Future<void> setGlobalPathLossN(double n) async {
@@ -462,7 +641,7 @@ class BleService extends ChangeNotifier {
     _addLog('# [SIMULATION] Demo Simulation mode STARTED with synthetic walking path.');
 
     _simulationTimer?.cancel();
-    _simulationTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+    _simulationTimer = Timer.periodic(const Duration(milliseconds: 120), (_) {
       _simAngle += 0.05;
       final now = DateTime.now();
 
@@ -488,12 +667,28 @@ class BleService extends ChangeNotifier {
         node.wbLastSeen = now;
 
         // Dynamic simulated sensor states
-        if (node.id == 3) {
-          node.doorState = (sin(_simAngle) > 0) ? DoorState.open : DoorState.closed;
+        if (node.id == 1) {
+          node.isFanOn = (sin(_simAngle * 0.8) > -0.2); // Dynamic fan spinning
         } else if (node.id == 2) {
           // Dynamic realistic iron temp oscillation (30°C to 65°C)
           node.ironTemperatureC = 45 + (18 * sin(_simAngle)).round();
+        } else if (node.id == 3) {
+          node.doorState = (sin(_simAngle) > 0) ? DoorState.open : DoorState.closed;
         }
+
+        // Process alert engine in simulation
+        alertService.processWristbandTelemetry(
+          nodeId: node.id,
+          nodeName: node.name,
+          rssi: node.wbFilteredRssi,
+          isHazardActive: node.isHazardConditionFulfilled,
+          hazardDescription: node.hazardDescription,
+          distanceM: node.wbDistanceM,
+          dangerRssiDbm: node.dangerRssiDbm,
+          warningRssiDbm: node.warningRssiDbm,
+          dangerDistanceM: node.dangerDistanceM,
+          warningDistanceM: node.warningDistanceM,
+        );
       }
 
       isWristbandOnline = true;
