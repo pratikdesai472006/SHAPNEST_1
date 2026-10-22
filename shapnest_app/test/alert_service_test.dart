@@ -321,16 +321,141 @@ void main() {
     // Bonus: Safe Zone Recovery Alert Verification
     // ------------------------------------------------------------------------
     test('Safe zone recovery alert triggers when child moves away from hazard', () {
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -55);
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -55);
+      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -55, isHazardActive: true);
+      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -55, isHazardActive: true);
       expect(alertService.currentActiveAlert!.zone, equals(ProximityZone.danger));
 
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -82);
-      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -82);
+      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -82, isHazardActive: true);
+      alertService.processWristbandTelemetry(nodeId: 2, nodeName: 'Iron', rssi: -82, isHazardActive: true);
 
       expect(alertService.getConfirmedZone(2), equals(ProximityZone.safe));
       expect(alertService.alertLog.first.title, contains('Safe'));
       expect(alertService.alertLog.first.body, contains('moved away'));
+    });
+
+    // ------------------------------------------------------------------------
+    // Requirement 3: Room temperature / normal condition / closed door suppresses all Yellow & Red messages
+    // ------------------------------------------------------------------------
+    test('Requirement 3: Normal condition (iron room temp / door closed) produces ZERO alerts in Yellow and Red zones', () {
+      // Child enters Yellow Zone (-68 dBm) near Iron, but Iron is at room temperature (isHazardActive: false)
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -68,
+        isHazardActive: false,
+      );
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -68,
+        isHazardActive: false,
+      );
+
+      expect(alertService.getConfirmedZone(2), equals(ProximityZone.warning));
+      expect(alertService.normalNotificationCount, equals(0)); // Suppressed!
+      expect(alertService.currentActiveAlert, isNull);
+
+      // Child enters Red Zone (-52 dBm) near Iron, but Iron is still at room temperature (isHazardActive: false)
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isHazardActive: false,
+      );
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isHazardActive: false,
+      );
+
+      expect(alertService.getConfirmedZone(2), equals(ProximityZone.danger));
+      expect(alertService.urgentNotificationCount, equals(0)); // Suppressed!
+      expect(alertService.loudAlarmTriggerCount, equals(0)); // Suppressed!
+      expect(alertService.currentActiveAlert, isNull);
+
+      // Same for Door: Child in Red Zone (-50 dBm) near Door, but Door is CLOSED (isHazardActive: false)
+      alertService.processWristbandTelemetry(
+        nodeId: 3,
+        nodeName: 'Door',
+        rssi: -50,
+        isHazardActive: false,
+      );
+      alertService.processWristbandTelemetry(
+        nodeId: 3,
+        nodeName: 'Door',
+        rssi: -50,
+        isHazardActive: false,
+      );
+
+      expect(alertService.getConfirmedZone(3), equals(ProximityZone.danger));
+      expect(alertService.urgentNotificationCount, equals(0)); // Suppressed!
+      expect(alertService.loudAlarmTriggerCount, equals(0)); // Suppressed!
+      expect(alertService.currentActiveAlert, isNull);
+    });
+
+    // ------------------------------------------------------------------------
+    // Requirement 3: Child in Red Zone + Iron HOT or Door OPEN -> Immediate and 5-second interval messages
+    // ------------------------------------------------------------------------
+    test('Requirement 3: Child in Red Zone with active hazard triggers immediate alert and repeats every 5 seconds', () async {
+      // Child enters Red Zone near Iron while Iron is HOT (isHazardActive: true)
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isHazardActive: true,
+        hazardDescription: 'Iron is HOT (65°C Burn Hazard)',
+      );
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isHazardActive: true,
+        hazardDescription: 'Iron is HOT (65°C Burn Hazard)',
+      );
+
+      // 1. Immediate alert triggered
+      expect(alertService.urgentNotificationCount, equals(1));
+      expect(alertService.loudAlarmTriggerCount, equals(1));
+      expect(alertService.currentActiveAlert, isNotNull);
+      expect(alertService.currentActiveAlert!.title, contains('URGENT'));
+
+      // Subsequent packets within 5 seconds (< 5000ms): NO repeat yet
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isHazardActive: true,
+        hazardDescription: 'Iron is HOT (65°C Burn Hazard)',
+      );
+      expect(alertService.urgentNotificationCount, equals(1));
+
+      // After 5 seconds elapsed (simulated or real delay)
+      // We simulate passage of time by resetting the timestamp in the private map through a test-friendly approach or delay
+      await Future.delayed(const Duration(milliseconds: 5100));
+
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isHazardActive: true,
+        hazardDescription: 'Iron is HOT (65°C Burn Hazard)',
+      );
+
+      // 2. Continuous 5-second interval alert triggered!
+      expect(alertService.urgentNotificationCount, equals(2));
+      expect(alertService.loudAlarmTriggerCount, equals(2));
+
+      // If Iron cools down (isHazardActive: false), alert clears and stops repeating
+      alertService.processWristbandTelemetry(
+        nodeId: 2,
+        nodeName: 'Iron',
+        rssi: -52,
+        isHazardActive: false, // Cooled down
+        hazardDescription: 'Iron is Cool',
+      );
+
+      expect(alertService.currentActiveAlert, isNull);
     });
   });
 }

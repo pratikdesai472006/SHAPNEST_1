@@ -8,6 +8,7 @@ import '../models/node_data.dart';
 import '../models/shapnest_protocol.dart';
 import 'alert_service.dart';
 import 'distance_engine.dart';
+import 'foreground_service.dart';
 import 'notification_service.dart';
 import 'protocol_parser.dart';
 
@@ -216,6 +217,9 @@ class BleService extends ChangeNotifier {
         continuousUpdates: true,
       );
 
+      // Start persistent background foreground service to keep scanning & alerts alive when app is closed/minimized
+      await ForegroundService.start();
+
       isScanning = true;
       statusMessage = 'Scanning BLE spectrum...';
       _addLog('# [LOG] Direct BLE Scanner ACTIVE (Low Latency Mode).');
@@ -232,6 +236,7 @@ class BleService extends ChangeNotifier {
     try {
       await FlutterBluePlus.stopScan();
       _scanSubscription?.cancel();
+      await ForegroundService.stop();
       isScanning = false;
       statusMessage = 'Scan stopped';
       _addLog('# [LOG] BLE Scanner stopped.');
@@ -276,7 +281,9 @@ class BleService extends ChangeNotifier {
         node.directRawRssi = rawRssi;
         node.directLastSeen = now;
         node.directState = NodeState.active;
-        alertService.setNodeOnline(nodeId, node.name);
+        if (trackingSource == TrackingSource.directPhone) {
+          alertService.setNodeOnline(nodeId, node.name);
+        }
 
         // Adopt over-the-air broadcasted calibration unless user calibrated manually on phone
         // Ignore legacy -59 dBm firmware constant so calibrated -80 dBm remains intact
@@ -370,7 +377,9 @@ class BleService extends ChangeNotifier {
           } else {
             node.wbState = block.state;
             node.wbFilteredRssi = block.filteredRssi;
-            alertService.setNodeOnline(node.id, node.name);
+            if (trackingSource == TrackingSource.wristband) {
+              alertService.setNodeOnline(node.id, node.name);
+            }
 
             // Consistent distance processing using phone's calibrated Dual-Regime Kalman Distance Engine
             if (block.filteredRssi != ShapnestProtocol.rssiOffline &&
@@ -451,7 +460,8 @@ class BleService extends ChangeNotifier {
             node.wbDistanceM = null;
             node.wbFilteredRssi = null; // Clear stale RSSI
             distanceEngine.clearWbDistance(node.id);
-            alertService.handleNodeOffline(node.id, node.name);
+            // In wristband tracking mode, the single wristband disconnected notification covers connection loss.
+            // Do NOT spam individual node disconnected notifications when the wristband itself is offline.
           }
           _addLog('# [WARN] Child Wristband LOST (> ${ShapnestProtocol.wristbandOfflineTimeout.inMilliseconds}ms silence).');
         }

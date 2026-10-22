@@ -50,6 +50,7 @@ class AlertService extends ChangeNotifier {
   final Map<int, ProximityZone?> _candidateZone = {};
   final Map<int, int> _candidateCount = {};
   final Map<int, ProximityZone?> _lastAlertedZone = {};
+  final Map<int, DateTime?> _lastRedAlertTime = {};
   final Map<int, bool> _hasNotifiedOffline = {};
   final Map<int, bool> _isOnline = {};
 
@@ -82,8 +83,12 @@ class AlertService extends ChangeNotifier {
   /// Mark wristband online on valid telemetry arrival (re-arms disconnection alerts)
   void handleWristbandOnline() {
     _hasWristbandEverConnected = true;
+    final wasOffline = !_isWristbandOnline;
     _isWristbandOnline = true;
     _hasNotifiedWristbandOffline = false;
+    if (wasOffline && _currentActiveAlert?.nodeId == 999) {
+      _currentActiveAlert = null;
+    }
     notifyListeners();
   }
 
@@ -100,6 +105,24 @@ class AlertService extends ChangeNotifier {
       _isWristbandOnline = false;
       _hasNotifiedWristbandOffline = true;
       wristbandOfflineNotificationCount++;
+
+      final alert = SafetyAlertMessage(
+        nodeId: 999,
+        nodeName: 'Child Wristband',
+        zone: ProximityZone.danger,
+        title: '⚠️ Wristband Disconnected',
+        body: 'Warning: Child wristband disconnected.',
+        isHazardActive: true,
+        hazardDescription: 'Wristband connection lost',
+        timestamp: DateTime.now(),
+      );
+
+      _currentActiveAlert = alert;
+      _alertLog.insert(0, alert);
+      if (_alertLog.length > 50) _alertLog.removeLast();
+
+      // Trigger mobile alert tone and vibration so user actually notices
+      _triggerMobileAlarmAndVibration();
 
       NotificationService().showWristbandOfflineNotification();
       notifyListeners();
@@ -120,6 +143,7 @@ class AlertService extends ChangeNotifier {
     _candidateZone.clear();
     _candidateCount.clear();
     _lastAlertedZone.clear();
+    _lastRedAlertTime.clear();
     _hasNotifiedOffline.clear();
     _isOnline.clear();
     _hasWristbandEverConnected = false;
@@ -232,7 +256,50 @@ class AlertService extends ChangeNotifier {
       // Child remains in same confirmed zone -> reset candidate counters
       _candidateZone[nodeId] = null;
       _candidateCount[nodeId] = 0;
-      // Do not repeatedly alert while child remains in same zone
+
+      // REQUIREMENT 3: Immediate and continuous 5-second interval message
+      // while child in red zone and iron is hot or door is open.
+      if (currentZone == ProximityZone.danger && isHazardActive) {
+        final lastRedTime = _lastRedAlertTime[nodeId];
+        final now = DateTime.now();
+        if (lastRedTime != null && now.difference(lastRedTime).inMilliseconds >= 5000) {
+          _lastRedAlertTime[nodeId] = now;
+          urgentNotificationCount++;
+
+          final alert = SafetyAlertMessage(
+            nodeId: nodeId,
+            nodeName: nodeName,
+            zone: ProximityZone.danger,
+            rssi: rssi,
+            distanceM: null,
+            isHazardActive: isHazardActive,
+            hazardDescription: hazardDescription,
+            title: '🚨 URGENT: Child Very Near $nodeName',
+            body: 'URGENT: Your child is very near the ${nodeName.toLowerCase()}${hazardDescription.isNotEmpty ? " ($hazardDescription)" : ""}.',
+            timestamp: now,
+          );
+
+          _currentActiveAlert = alert;
+          _alertLog.insert(0, alert);
+          if (_alertLog.length > 50) _alertLog.removeLast();
+
+          _triggerMobileAlarmAndVibration();
+
+          NotificationService().showHazardNotification(
+            id: nodeId,
+            title: alert.title,
+            body: alert.body,
+            isCritical: true,
+          );
+
+          notifyListeners();
+        }
+      } else if (!isHazardActive && _currentActiveAlert?.nodeId == nodeId) {
+        // If hazard condition deactivated (e.g. Iron cooled down, door closed) -> clear alert immediately
+        _lastRedAlertTime[nodeId] = null;
+        _currentActiveAlert = null;
+        notifyListeners();
+      }
       return;
     }
 
@@ -260,75 +327,100 @@ class AlertService extends ChangeNotifier {
     // RED ZONE (Confirmed entry into Red Zone)
     // -------------------------------------------------------------
     if (candidate == ProximityZone.danger) {
-      if (_lastAlertedZone[nodeId] != ProximityZone.danger) {
-        _lastAlertedZone[nodeId] = ProximityZone.danger;
-        urgentNotificationCount++;
+      // REQUIREMENT 3: Only alert if hazard condition is fulfilled (Iron HOT or Door OPEN)
+      if (isHazardActive) {
+        final lastRedTime = _lastRedAlertTime[nodeId];
+        final isFirstRedAlert = (_lastAlertedZone[nodeId] != ProximityZone.danger || lastRedTime == null);
+        final is5SecondInterval = (lastRedTime != null && now.difference(lastRedTime).inMilliseconds >= 5000);
 
-        final alert = SafetyAlertMessage(
-          nodeId: nodeId,
-          nodeName: nodeName,
-          zone: ProximityZone.danger,
-          rssi: rssi,
-          distanceM: null, // Do not include exact distance
-          isHazardActive: isHazardActive,
-          hazardDescription: hazardDescription,
-          title: '🚨 URGENT: Child Very Near $nodeName',
-          body: 'URGENT: Your child is very near the ${nodeName.toLowerCase()}.',
-          timestamp: now,
-        );
+        if (isFirstRedAlert || is5SecondInterval) {
+          _lastAlertedZone[nodeId] = ProximityZone.danger;
+          _lastRedAlertTime[nodeId] = now;
+          urgentNotificationCount++;
 
-        _currentActiveAlert = alert;
-        _alertLog.insert(0, alert);
-        if (_alertLog.length > 50) _alertLog.removeLast();
+          final alert = SafetyAlertMessage(
+            nodeId: nodeId,
+            nodeName: nodeName,
+            zone: ProximityZone.danger,
+            rssi: rssi,
+            distanceM: null, // Do not include exact distance
+            isHazardActive: isHazardActive,
+            hazardDescription: hazardDescription,
+            title: '🚨 URGENT: Child Very Near $nodeName',
+            body: 'URGENT: Your child is very near the ${nodeName.toLowerCase()}${hazardDescription.isNotEmpty ? " ($hazardDescription)" : ""}.',
+            timestamp: now,
+          );
 
-        // Trigger loud alarm and vibration
-        _triggerMobileAlarmAndVibration();
+          _currentActiveAlert = alert;
+          _alertLog.insert(0, alert);
+          if (_alertLog.length > 50) _alertLog.removeLast();
 
-        // Send urgent notification
-        NotificationService().showHazardNotification(
-          id: nodeId,
-          title: alert.title,
-          body: alert.body,
-          isCritical: true,
-        );
+          // Trigger loud alarm and vibration
+          _triggerMobileAlarmAndVibration();
 
-        notifyListeners();
+          // Send urgent notification (immediate & repeated every 5s)
+          NotificationService().showHazardNotification(
+            id: nodeId,
+            title: alert.title,
+            body: alert.body,
+            isCritical: true,
+          );
+
+          notifyListeners();
+        }
+      } else {
+        // Normal condition / Room temp iron / Door closed -> NO alert message in Red zone
+        _lastRedAlertTime[nodeId] = null;
+        if (_currentActiveAlert?.nodeId == nodeId) {
+          _currentActiveAlert = null;
+          notifyListeners();
+        }
       }
     }
     // -------------------------------------------------------------
     // YELLOW ZONE (Confirmed entry into Yellow Zone)
     // -------------------------------------------------------------
     else if (candidate == ProximityZone.warning) {
-      if (_lastAlertedZone[nodeId] != ProximityZone.warning) {
-        _lastAlertedZone[nodeId] = ProximityZone.warning;
-        normalNotificationCount++;
+      _lastRedAlertTime[nodeId] = null;
+      // REQUIREMENT 3: Only alert if hazard condition is fulfilled
+      if (isHazardActive) {
+        if (_lastAlertedZone[nodeId] != ProximityZone.warning) {
+          _lastAlertedZone[nodeId] = ProximityZone.warning;
+          normalNotificationCount++;
 
-        final alert = SafetyAlertMessage(
-          nodeId: nodeId,
-          nodeName: nodeName,
-          zone: ProximityZone.warning,
-          rssi: rssi,
-          distanceM: null, // Do not include exact distance
-          isHazardActive: isHazardActive,
-          hazardDescription: hazardDescription,
-          title: '⚠️ Warning: Child Near $nodeName',
-          body: 'Warning: Your child is near the ${nodeName.toLowerCase()}.',
-          timestamp: now,
-        );
+          final alert = SafetyAlertMessage(
+            nodeId: nodeId,
+            nodeName: nodeName,
+            zone: ProximityZone.warning,
+            rssi: rssi,
+            distanceM: null, // Do not include exact distance
+            isHazardActive: isHazardActive,
+            hazardDescription: hazardDescription,
+            title: '⚠️ Warning: Child Near $nodeName',
+            body: 'Warning: Your child is near the ${nodeName.toLowerCase()}${hazardDescription.isNotEmpty ? " ($hazardDescription)" : ""}.',
+            timestamp: now,
+          );
 
-        _currentActiveAlert = alert;
-        _alertLog.insert(0, alert);
-        if (_alertLog.length > 50) _alertLog.removeLast();
+          _currentActiveAlert = alert;
+          _alertLog.insert(0, alert);
+          if (_alertLog.length > 50) _alertLog.removeLast();
 
-        // Normal notification ONLY — DO NOT trigger loud alarm
-        NotificationService().showHazardNotification(
-          id: nodeId,
-          title: alert.title,
-          body: alert.body,
-          isCritical: false,
-        );
+          // Normal notification ONLY — DO NOT trigger loud alarm
+          NotificationService().showHazardNotification(
+            id: nodeId,
+            title: alert.title,
+            body: alert.body,
+            isCritical: false,
+          );
 
-        notifyListeners();
+          notifyListeners();
+        }
+      } else {
+        // Normal condition / Room temp iron / Door closed -> NO alert message in Yellow zone
+        if (_currentActiveAlert?.nodeId == nodeId) {
+          _currentActiveAlert = null;
+          notifyListeners();
+        }
       }
     }
     // -------------------------------------------------------------
@@ -336,22 +428,25 @@ class AlertService extends ChangeNotifier {
     // -------------------------------------------------------------
     else {
       _lastAlertedZone[nodeId] = ProximityZone.safe;
+      _lastRedAlertTime[nodeId] = null;
       if (previousZone == ProximityZone.danger ||
           previousZone == ProximityZone.warning) {
-        final alert = SafetyAlertMessage(
-          nodeId: nodeId,
-          nodeName: nodeName,
-          zone: ProximityZone.safe,
-          rssi: rssi,
-          distanceM: null,
-          isHazardActive: isHazardActive,
-          hazardDescription: hazardDescription,
-          title: '✅ Safe: Child Away from $nodeName',
-          body: 'Your child has moved away from the ${nodeName.toLowerCase()}.',
-          timestamp: now,
-        );
-        _alertLog.insert(0, alert);
-        if (_alertLog.length > 50) _alertLog.removeLast();
+        if (isHazardActive) {
+          final alert = SafetyAlertMessage(
+            nodeId: nodeId,
+            nodeName: nodeName,
+            zone: ProximityZone.safe,
+            rssi: rssi,
+            distanceM: null,
+            isHazardActive: isHazardActive,
+            hazardDescription: hazardDescription,
+            title: '✅ Safe: Child Away from $nodeName',
+            body: 'Your child has moved away from the ${nodeName.toLowerCase()}.',
+            timestamp: now,
+          );
+          _alertLog.insert(0, alert);
+          if (_alertLog.length > 50) _alertLog.removeLast();
+        }
       }
       if (_currentActiveAlert?.nodeId == nodeId) {
         _currentActiveAlert = null;
@@ -382,6 +477,7 @@ class AlertService extends ChangeNotifier {
     _candidateZone[nodeId] = null;
     _candidateCount[nodeId] = 0;
     _lastAlertedZone[nodeId] = ProximityZone.safe;
+    _lastRedAlertTime.remove(nodeId);
 
     if (_currentActiveAlert?.nodeId == nodeId) {
       _currentActiveAlert = null;

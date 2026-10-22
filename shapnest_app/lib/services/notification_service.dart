@@ -130,7 +130,7 @@ class NotificationService {
       id: 999, // Distinct ID for wristband
       title: 'Wristband Disconnected',
       body: 'Warning: Child wristband disconnected.',
-      isCritical: false,
+      isCritical: true, // Critical heads-up priority so user notices
     );
   }
 
@@ -162,8 +162,11 @@ class NotificationService {
     }
 
     final lastTime = _lastNotificationTime[id];
-    // Rate limit per node: minimum 10 seconds between notifications to avoid spamming the OS
-    if (enableRateLimiting && lastTime != null && now.difference(lastTime).inSeconds < 10) {
+    // Rate limit per node:
+    // 4 seconds for critical alerts (allowing the 5-second interval messages in Red Zone),
+    // 10 seconds for non-critical warnings
+    final minIntervalSec = isCritical ? 4 : 10;
+    if (enableRateLimiting && lastTime != null && now.difference(lastTime).inSeconds < minIntervalSec) {
       return;
     }
     _lastNotificationTime[id] = now;
@@ -180,6 +183,11 @@ class NotificationService {
       enableLights: true,
       enableVibration: true,
       playSound: true,
+      visibility: NotificationVisibility.public,
+      category: isCritical
+          ? AndroidNotificationCategory.alarm
+          : AndroidNotificationCategory.status,
+      fullScreenIntent: isCritical,
       styleInformation: BigTextStyleInformation(
         body,
         contentTitle: title,
